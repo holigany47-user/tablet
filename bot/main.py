@@ -3,12 +3,20 @@ import logging
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 # Загрузка переменных окружения
 load_dotenv()
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
@@ -20,6 +28,19 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Постоянное меню
+def get_main_keyboard():
+    """Клавиатура основного меню"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
+            [KeyboardButton(text="🔄 Обновить таблицу"), KeyboardButton(text="❌ Удалить таблицу")],
+            [KeyboardButton(text="📤 Экспорт таблицы"), KeyboardButton(text="ℹ️ Помощь")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+
 # Импортируем и регистрируем роутеры
 from bot.handlers.start import start_router
 from bot.handlers.files import files_router
@@ -29,9 +50,20 @@ dp.include_router(files_router)
 
 async def main():
     """Основная функция запуска бота"""
-    logger.info("Бот запущен...")
-    await dp.start_polling(bot)
+    try:
+        logger.info("Бот запущен...")
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Ошибка при работе бота: {e}")
+    finally:
+        logger.info("Бот остановлен")
+        await bot.session.close()
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")

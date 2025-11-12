@@ -1,8 +1,15 @@
-import logging
+from dataclasses import dataclass
+from typing import List
 
-logger = logging.getLogger(__name__)
-
-from .helpers import *
-from .validators import *
-
-logger.debug("✅ Утилиты инициализированы")
+@dataclass
+class TableInfo:
+    """Модель для хранения информации о таблице"""
+    id: str
+    user_id: int
+    filename: str
+    original_name: str
+    file_path: str
+    created_at: str
+    columns: List[str]
+    rows_count: int
+    file_size: int

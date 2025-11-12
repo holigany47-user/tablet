@@ -74,22 +74,35 @@ def read_table_file(file_path: str) -> Tuple[pd.DataFrame, List[str], int]:
         else:
             raise ValueError(f"Unsupported file format: {ext}")
         
+        # Обработка пустого DataFrame
+        if df.empty:
+            logger.warning(f"Файл {file_path} пустой")
+            return pd.DataFrame(), [], 0
+        
+        # Очистка названий колонок от пробелов
+        df.columns = df.columns.astype(str).str.strip()
+        
         columns = df.columns.tolist()
         rows_count = len(df)
+        
+        logger.info(f"Успешно прочитан файл {file_path}: {rows_count} строк, {len(columns)} колонок")
         
         return df, columns, rows_count
         
     except Exception as e:
         logger.error(f"Error reading file {file_path}: {e}")
-        raise
+        raise ValueError(f"Ошибка чтения файла {file_path}: {str(e)}")
 
 def save_table_file(df: pd.DataFrame, file_path: str, format: str = 'xlsx'):
     """Сохранение таблицы в различных форматах"""
     try:
+        # Создание директории если не существует
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
         if format == 'xlsx':
             df.to_excel(file_path, index=False)
         elif format == 'csv':
-            df.to_csv(file_path, index=False)
+            df.to_csv(file_path, index=False, encoding='utf-8')
         elif format == 'json':
             df.to_json(file_path, orient='records', indent=2, force_ascii=False)
         elif format == 'xml':
@@ -105,6 +118,8 @@ def save_table_file(df: pd.DataFrame, file_path: str, format: str = 'xlsx'):
             tree.write(file_path, encoding='utf-8', xml_declaration=True)
         else:
             raise ValueError(f"Unsupported format: {format}")
+        
+        logger.info(f"Успешно сохранен файл {file_path} в формате {format}")
             
     except Exception as e:
         logger.error(f"Error saving file {file_path}: {e}")
@@ -144,4 +159,39 @@ def compare_tables(df1: pd.DataFrame, df2: pd.DataFrame) -> Dict[str, Any]:
 
 def get_file_size(file_path: str) -> int:
     """Получение размера файла в байтах"""
-    return os.path.getsize(file_path)
+    try:
+        return os.path.getsize(file_path)
+    except OSError as e:
+        logger.error(f"Error getting file size for {file_path}: {e}")
+        return 0
+
+def format_file_size(size_bytes: int) -> str:
+    """Форматирование размера файла в читаемый вид"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+        
+    return f"{size_bytes:.1f} {size_names[i]}"
+
+def validate_dataframe(df: pd.DataFrame) -> Tuple[bool, str]:
+    """Валидация DataFrame на корректность"""
+    if df.empty:
+        return False, "Таблица пустая"
+    
+    if len(df.columns) == 0:
+        return False, "В таблице нет колонок"
+    
+    # Проверка на наличие NaN в названиях колонок
+    if df.columns.isna().any():
+        return False, "Обнаружены пустые названия колонок"
+    
+    # Проверка на дубликаты в названиях колонок
+    if df.columns.duplicated().any():
+        return False, "Обнаружены дублирующиеся названия колонок"
+    
+    return True, "OK"
