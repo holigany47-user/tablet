@@ -184,3 +184,68 @@ def get_file_info(file_path: str) -> dict:
     except Exception as e:
         logger.error(f"❌ Ошибка при получении информации о файле '{file_path}': {e}")
         return {'exists': False, 'error': str(e)}
+
+def read_table_file(file_path: str):
+    """Чтение таблицы из файла и возврат DataFrame, колонок и количества строк"""
+    logger.info(f"📖 Чтение таблицы из файла: '{file_path}'")
+    try:
+        df = read_file(file_path)
+        if df is not None:
+            return df, list(df.columns), len(df)
+        return None, [], 0
+    except Exception as e:
+        logger.error(f"❌ Ошибка при чтении таблицы '{file_path}': {e}")
+        return None, [], 0
+
+def save_table_file(df: pd.DataFrame, file_path: str, format: str):
+    """Сохранение таблицы в файл"""
+    logger.info(f"💾 Сохранение таблицы в файл: '{file_path}' формата {format}")
+    try:
+        if format == 'csv':
+            df.to_csv(file_path, index=False)
+        elif format in ['xlsx', 'xls']:
+            df.to_excel(file_path, index=False)
+        elif format == 'json':
+            df.to_json(file_path, indent=2)
+        else:
+            raise ValueError(f"Неподдерживаемый формат: {format}")
+        logger.info(f"✅ Таблица сохранена в {file_path}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении таблицы в {file_path}: {e}")
+        return False
+
+def compare_tables(old_df: pd.DataFrame, new_df: pd.DataFrame) -> dict:
+    """Сравнение двух таблиц"""
+    logger.debug("🔍 Сравнение таблиц")
+    try:
+        old_cols = set(old_df.columns)
+        new_cols = set(new_df.columns)
+        
+        return {
+            'columns_diff': {
+                'added': list(new_cols - old_cols),
+                'removed': list(old_cols - new_cols),
+                'common': list(old_cols & new_cols)
+            },
+            'rows_diff': {
+                'old_rows': len(old_df),
+                'new_rows': len(new_df),
+                'difference': len(new_df) - len(old_df)
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сравнении таблиц: {e}")
+        return {}
+
+def get_file_size(file_path: str) -> int:
+    """Получение размера файла в байтах"""
+    try:
+        return os.path.getsize(file_path)
+    except:
+        return 0
+
+def generate_timestamp() -> str:
+    """Генерация временной метки"""
+    from datetime import datetime
+    return datetime.now().strftime("%H%M%S")
