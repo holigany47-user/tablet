@@ -9,7 +9,9 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from bot.handlers import router
+# Импортируем роутеры напрямую из файлов
+from bot.handlers.start import router as start_router
+from bot.handlers.files import router as files_router
 
 # Настройка расширенного логирования
 logging.basicConfig(
@@ -62,9 +64,10 @@ async def main():
         dp = Dispatcher(storage=storage)
         logger.info("✅ Диспетчер инициализирован")
         
-        # Регистрация роутеров
+        # Регистрация роутеров напрямую
         logger.debug("Регистрация роутеров...")
-        dp.include_router(router)
+        dp.include_router(start_router)
+        dp.include_router(files_router)
         logger.info("✅ Роутеры зарегистрированы")
         
         # Запуск бота
