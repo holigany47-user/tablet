@@ -2,24 +2,35 @@ import os
 import pandas as pd
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
-
-# Абсолютные импорты
-from bot.models import TableInfo, TableManager
-from bot.utils.helpers import read_table_file, save_table_file, compare_tables, get_file_size, generate_timestamp
+import json
 
 class AdvancedTableManager:
     """Расширенный менеджер для работы с таблицами"""
     
     def __init__(self, storage_path: str = "storage"):
         self.storage_path = storage_path
-        self.table_manager = TableManager()
+        self.data_file = os.path.join(storage_path, "tables_data.json")
         self._ensure_storage_exists()
+        self._load_data()
     
     def _ensure_storage_exists(self):
         """Создание папки для хранения таблиц"""
         os.makedirs(self.storage_path, exist_ok=True)
     
-    def save_table(self, user_id: int, file_path: str, original_name: str) -> TableInfo:
+    def _load_data(self):
+        """Загрузка данных из JSON файла"""
+        if os.path.exists(self.data_file):
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                self.tables_data = json.load(f)
+        else:
+            self.tables_data = {}
+    
+    def _save_data(self):
+        """Сохранение данных в JSON файл"""
+        with open(self.data_file, 'w', encoding='utf-8') as f:
+            json.dump(self.tables_data, f, ensure_ascii=False, indent=2)
+    
+    def save_table(self, user_id: int, file_path: str, original_name: str) -> Dict[str, Any]:
         """Сохранение новой таблицы с датой в имени"""
         try:
             # Чтение таблицы для получения информации
@@ -35,135 +46,55 @@ class AdvancedTableManager:
             save_table_file(df, save_path, 'xlsx')
             file_size = get_file_size(save_path)
             
-            # Добавление в менеджер
-            table_info = self.table_manager.add_table(
-                user_id=user_id,
-                filename=filename,
-                file_path=save_path,
-                original_name=original_name,
-                columns=columns,
-                rows_count=rows_count,
-                file_size=file_size
-            )
+            # Создание записи о таблице
+            table_id = str(len(self.tables_data) + 1)
+            table_info = {
+                'table_id': table_id,
+                'user_id': user_id,
+                'filename': filename,
+                'file_path': save_path,
+                'original_name': original_name,
+                'columns': columns,
+                'rows_count': rows_count,
+                'file_size': file_size,
+                'created_at': current_date
+            }
+            
+            # Сохранение в данных
+            if str(user_id) not in self.tables_data:
+                self.tables_data[str(user_id)] = {}
+            self.tables_data[str(user_id)][table_id] = table_info
+            self._save_data()
             
             return table_info
             
         except Exception as e:
             raise Exception(f"Ошибка сохранения таблицы: {e}")
     
-    def get_user_tables(self, user_id: int) -> List[TableInfo]:
+    def get_user_tables(self, user_id: int) -> List[Dict[str, Any]]:
         """Получение всех таблиц пользователя"""
-        return self.table_manager.get_user_tables(user_id)
+        user_tables = self.tables_data.get(str(user_id), {})
+        return list(user_tables.values())
     
-    def get_table(self, table_id: str) -> Optional[TableInfo]:
-        """Получение таблицы по ID"""
-        return self.table_manager.get_table(table_id)
+    def get_table(self, table_id: str, user_id: int) -> Optional[Dict[str, Any]]:
+        """Получение таблицы по ID для конкретного пользователя"""
+        user_tables = self.tables_data.get(str(user_id), {})
+        return user_tables.get(table_id)
     
-    def delete_table(self, table_id: str) -> bool:
+    def delete_table(self, table_id: str, user_id: int) -> bool:
         """Удаление таблицы"""
-        table = self.table_manager.get_table(table_id)
-        if table:
-            # Удаление файла
-            if os.path.exists(table.file_path):
-                os.remove(table.file_path)
-            # Удаление из менеджера
-            return self.table_manager.delete_table(table_id)
-        return False
-    
-    def update_table(self, table_id: str, new_file_path: str, update_type: str = 'replace') -> Tuple[bool, Dict[str, Any]]:
-        """Обновление таблицы с различными стратегиями"""
         try:
-            table = self.table_manager.get_table(table_id)
-            if not table:
-                return False, {"error": "Таблица не найдена"}
-            
-            # Чтение старой и новой таблиц
-            old_df, _, _ = read_table_file(table.file_path)
-            new_df, new_columns, new_rows_count = read_table_file(new_file_path)
-            
-            comparison = compare_tables(old_df, new_df)
-            
-            if update_type == 'replace':
-                # Полная замена
-                result_df = new_df
-                message = "Таблица полностью заменена"
-                
-            elif update_type == 'add_columns':
-                # Добавление новых столбцов
-                result_df = old_df.copy()
-                for col in comparison['columns_diff']['added']:
-                    result_df[col] = new_df[col] if col in new_df.columns else None
-                message = "Добавлены новые столбцы"
-                
-            elif update_type == 'add_rows':
-                # Добавление новых строк
-                result_df = pd.concat([old_df, new_df], ignore_index=True)
-                result_df = result_df.drop_duplicates()
-                message = "Добавлены новые строки"
-                
-            elif update_type == 'merge':
-                # Полное объединение
-                common_cols = list(set(old_df.columns) & set(new_df.columns))
-                if common_cols:
-                    result_df = pd.merge(old_df, new_df, on=common_cols, how='outer')
-                else:
-                    result_df = pd.concat([old_df, new_df], axis=1)
-                message = "Таблицы объединены"
-                
-            else:
-                return False, {"error": "Неизвестный тип обновления"}
-            
-            # Сохранение обновленной таблицы
-            save_table_file(result_df, table.file_path, 'xlsx')
-            
-            # Обновление информации о таблице
-            self.table_manager.update_table(
-                table_id=table_id,
-                columns=result_df.columns.tolist(),
-                rows_count=len(result_df),
-                file_size=get_file_size(table.file_path)
-            )
-            
-            return True, {
-                "message": message,
-                "comparison": comparison,
-                "new_columns": result_df.columns.tolist(),
-                "new_rows_count": len(result_df)
-            }
-            
+            user_tables = self.tables_data.get(str(user_id), {})
+            if table_id in user_tables:
+                table = user_tables[table_id]
+                # Удаление файла
+                if os.path.exists(table['file_path']):
+                    os.remove(table['file_path'])
+                # Удаление из данных
+                del user_tables[table_id]
+                self._save_data()
+                return True
+            return False
         except Exception as e:
-            return False, {"error": f"Ошибка обновления таблицы: {e}"}
-    
-    def export_table(self, table_id: str, format: str) -> Optional[str]:
-        """Экспорт таблицы в другой формат"""
-        try:
-            table = self.table_manager.get_table(table_id)
-            if not table:
-                return None
-            
-            df, _, _ = read_table_file(table.file_path)
-            
-            # Создание пути для экспорта
-            export_filename = f"{os.path.splitext(table.filename)[0]}.{format}"
-            export_path = os.path.join(self.storage_path, export_filename)
-            
-            save_table_file(df, export_path, format)
-            return export_path
-            
-        except Exception as e:
-            print(f"Ошибка экспорта: {e}")
-            return None
-    
-    def get_table_preview(self, table_id: str, rows: int = 5) -> Optional[pd.DataFrame]:
-        """Получение превью таблицы"""
-        try:
-            table = self.table_manager.get_table(table_id)
-            if not table:
-                return None
-            
-            df, _, _ = read_table_file(table.file_path)
-            return df.head(rows)
-            
-        except Exception as e:
-            print(f"Ошибка получения превью: {e}")
-            return None
+            print(f"Ошибка при удалении таблицы: {e}")
+            return False
