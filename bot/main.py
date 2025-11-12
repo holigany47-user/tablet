@@ -4,6 +4,12 @@ import sys
 import os
 from os import getenv
 
+# Добавьте эти импорты для работы с .env
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из .env файла
+load_dotenv()
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
