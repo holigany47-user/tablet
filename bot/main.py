@@ -8,7 +8,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 load_dotenv()
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Инициализация бота и диспетчера
@@ -29,9 +36,20 @@ dp.include_router(files_router)
 
 async def main():
     """Основная функция запуска бота"""
-    logger.info("Бот запущен...")
-    await dp.start_polling(bot)
+    try:
+        logger.info("Бот запущен...")
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Ошибка при работе бота: {e}")
+    finally:
+        logger.info("Бот остановлен")
+        await bot.session.close()
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Бот остановлен пользователем")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
