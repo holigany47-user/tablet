@@ -3,7 +3,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile  # ДОБАВЛЯЕМ ЭТОТ ИМПОРТ
+from aiogram.types import FSInputFile
 
 from bot.services.table_manager import AdvancedTableManager
 from bot.handlers.states import TableStates
@@ -41,13 +41,15 @@ async def help_command(message: Message):
 /help - Эта справка
 
 **Поддерживаемые форматы:**
-• CSV (.csv) 
-• JSON (.json)
+• CSV (.csv)
+• JSON (.json) 
+• Excel (.xlsx, .xls)
 
 **Функционал:**
 • Сохранение таблиц с датой в названии
 • Просмотр списка таблиц
 • Удаление таблиц
+• Скачивание оригинальных файлов
 """
     await message.answer(help_text, parse_mode='Markdown')
 
@@ -57,8 +59,12 @@ async def handle_save_table(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.edit_text(
         "📥 **Сохранение таблицы**\n\n"
-        "Пожалуйста, загрузите файл таблицы (CSV, JSON).\n"
-        "Файл будет сохранен с датой в названии.",
+        "Пожалуйста, загрузите файл таблицы (CSV, JSON, Excel).\n"
+        "Файл будет сохранен с датой в названии.\n\n"
+        "📁 **Поддерживаемые форматы:**\n"
+        "• CSV (.csv)\n"
+        "• JSON (.json)\n"
+        "• Excel (.xlsx, .xls)",
         parse_mode='Markdown'
     )
     await state.set_state(TableStates.waiting_table_file)
@@ -73,7 +79,8 @@ async def handle_list_tables(callback: CallbackQuery):
     if not tables:
         await callback.message.edit_text(
             "📋 **Мои таблицы**\n\n"
-            "У вас пока нет сохраненных таблиц.",
+            "У вас пока нет сохраненных таблиц.\n\n"
+            "💡 Нажмите «📥 Сохранить таблицу», чтобы добавить первую таблицу.",
             parse_mode='Markdown'
         )
         return
@@ -83,15 +90,14 @@ async def handle_list_tables(callback: CallbackQuery):
     
     for i, table in enumerate(tables, 1):
         message += f"{i}. **{table.original_name}**\n"
-        message += f"   📅 {table.created_at}\n"
-        message += f"   📊 {len(table.columns)} кол., {table.rows_count} стр.\n\n"
+        message += f"   📅 {table.created_at} | 📊 {len(table.columns)} кол. | 📈 {table.rows_count} стр.\n\n"
         
         keyboard.append([
-            InlineKeyboardButton(text=f"👁️ {table.original_name}", callback_data=f"view_{table.id}"),
-            InlineKeyboardButton(text="❌", callback_data=f"delete_{table.id}")
+            InlineKeyboardButton(text=f"👁️ {table.original_name[:15]}...", callback_data=f"view_{table.id}"),
+            InlineKeyboardButton(text="❌", callback_data=f"confirm_delete_{table.id}")
         ])
     
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
+    keyboard.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_main")])
     
     await callback.message.edit_text(
         message,
@@ -110,24 +116,36 @@ async def handle_view_table(callback: CallbackQuery):
         await callback.message.edit_text("❌ Таблица не найдена.")
         return
     
-    preview = table_manager.get_table_preview(table_id, 3)
+    preview_df = table_manager.get_table_preview(table_id, 3)
     
     message = f"📊 **{table.original_name}**\n\n"
-    message += f"📅 Дата: {table.created_at}\n"
+    message += f"📅 Дата сохранения: {table.created_at}\n"
     message += f"📊 Столбцы: {len(table.columns)}\n"
     message += f"📈 Строки: {table.rows_count}\n"
     message += f"💾 Размер: {table.file_size / 1024:.1f} KB\n\n"
     
-    if preview:
-        message += "**Превью:**\n```\n"
-        message += preview + "\n```\n\n"
+    if preview_df is not None and not preview_df.empty:
+        message += "**Превью данных:**\n"
+        message += "```\n"
+        # Форматируем превью для лучшего отображения
+        preview_text = preview_df.to_string(index=False, max_cols=4, max_rows=3)
+        if len(preview_text) > 500:
+            preview_text = preview_text[:500] + "..."
+        message += preview_text + "\n```\n\n"
+    else:
+        message += "**Превью недоступно**\n\n"
     
-    message += "**Столбцы:** " + ", ".join(table.columns)
+    message += f"**Столбцы ({len(table.columns)}):**\n"
+    # Показываем до 10 столбцов, остальные через "..."
+    if len(table.columns) <= 10:
+        message += ", ".join(table.columns)
+    else:
+        message += ", ".join(table.columns[:10]) + f"... (+{len(table.columns) - 10} еще)"
     
     keyboard = [
-        [InlineKeyboardButton(text="📤 Скачать", callback_data=f"download_{table.id}"),
-         InlineKeyboardButton(text="❌ Удалить", callback_data=f"confirm_delete_{table.id}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="list_tables")]
+        [InlineKeyboardButton(text="📤 Скачать оригинал", callback_data=f"download_{table.id}")],
+        [InlineKeyboardButton(text="❌ Удалить таблицу", callback_data=f"confirm_delete_{table.id}")],
+        [InlineKeyboardButton(text="🔙 К списку таблиц", callback_data="list_tables")]
     ]
     
     await callback.message.edit_text(
@@ -153,6 +171,7 @@ async def handle_download_table(callback: CallbackQuery):
             document=file,
             caption=f"📊 {table.original_name}\n📅 {table.created_at}"
         )
+        await callback.answer("✅ Файл отправлен")
     except Exception as e:
         await callback.message.answer(f"❌ Ошибка при скачивании: {e}")
 
@@ -177,7 +196,8 @@ async def handle_confirm_delete(callback: CallbackQuery):
         f"Вы уверены, что хотите удалить таблицу:\n"
         f"**{table.original_name}**?\n\n"
         f"📅 Дата: {table.created_at}\n"
-        f"📊 Данные: {len(table.columns)} колонок, {table.rows_count} строк",
+        f"📊 Данные: {len(table.columns)} колонок, {table.rows_count} строк\n\n"
+        f"⚠️ Это действие нельзя отменить!",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
         parse_mode='Markdown'
     )
@@ -196,7 +216,8 @@ async def handle_delete_table(callback: CallbackQuery):
         )
     else:
         await callback.message.edit_text(
-            "❌ Ошибка при удалении таблицы.",
+            "❌ Ошибка при удалении таблицы.\n\n"
+            "💡 Таблица могла быть уже удалена или файл недоступен.",
             parse_mode='Markdown'
         )
 
@@ -227,7 +248,8 @@ async def handle_update_table(callback: CallbackQuery):
     await callback.message.edit_text(
         "🔄 **Обновление таблиц**\n\n"
         "Эта функция временно недоступна.\n"
-        "Используйте сохранение новой таблицы.",
+        "Используйте сохранение новой таблицы.\n\n"
+        "💡 Вы можете удалить старую таблицу и загрузить обновленную версию.",
         parse_mode='Markdown'
     )
 
@@ -237,6 +259,7 @@ async def handle_export_table(callback: CallbackQuery):
     await callback.message.edit_text(
         "📤 **Экспорт таблиц**\n\n"
         "Эта функция временно недоступна.\n"
-        "Вы можете скачать оригинальный файл таблицы.",
+        "Вы можете скачать оригинальный файл таблицы через меню просмотра.\n\n"
+        "💡 Нажмите «📋 Мои таблицы» → выберите таблицу → «📤 Скачать оригинал»",
         parse_mode='Markdown'
     )
