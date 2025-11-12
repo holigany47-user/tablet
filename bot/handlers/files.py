@@ -1,16 +1,17 @@
 import os
 import glob
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-# Используем единый менеджер
 from bot.services import table_manager
 from bot.handlers.states import TableStates
 from bot.utils.helpers import validate_file_extension, safe_filename
 
 files_router = Router()
+logger = logging.getLogger(__name__)
 
 def get_main_keyboard():
     """Клавиатура основного меню"""
@@ -99,11 +100,106 @@ async def handle_table_file(message: Message, state: FSMContext):
                 pass
         await state.clear()
 
+@files_router.message(StateFilter(TableStates.waiting_update_file), F.document)
+async def handle_update_table_file(message: Message, state: FSMContext):
+    """Обработчик загружаемых файлов для обновления таблиц"""
+    user_id = message.from_user.id
+    
+    try:
+        # Получаем ID таблицы для обновления из состояния
+        state_data = await state.get_data()
+        table_id = state_data.get('update_table_id')
+        
+        if not table_id:
+            await message.answer("❌ Не выбрана таблица для обновления.", reply_markup=get_main_keyboard())
+            await state.clear()
+            return
+
+        document = message.document
+        if document:
+            file = await message.bot.get_file(document.file_id)
+            original_name = document.file_name or "unknown_file"
+        else:
+            await message.answer("❌ Пожалуйста, отправьте файл как документ.", reply_markup=get_main_keyboard())
+            return
+
+        # Проверка формата файла
+        if not validate_file_extension(original_name, ['.csv', '.json', '.xlsx', '.xls']):
+            await message.answer(
+                f"❌ Неподдерживаемый формат файла.\n\n"
+                f"📁 **Поддерживаемые форматы:**\n"
+                f"• CSV (.csv)\n"
+                f"• JSON (.json)\n" 
+                f"• Excel (.xlsx, .xls)\n\n"
+                f"💡 Файл должен быть отправлен как документ.",
+                parse_mode='Markdown',
+                reply_markup=get_main_keyboard()
+            )
+            return
+
+        # Скачивание файла
+        safe_name = safe_filename(original_name)
+        temp_path = f"temp_update_{user_id}_{safe_name}"
+        await message.bot.download_file(file.file_path, temp_path)
+
+        # Обновление таблицы (простая замена)
+        success, result = table_manager.update_table(table_id, temp_path, 'replace')
+        
+        # Очистка временного файла
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        if success:
+            await message.answer(
+                f"✅ **Таблица успешно обновлена!**\n\n"
+                f"📁 Имя: {result.get('message', 'Таблица обновлена')}\n"
+                f"📊 Новые столбцы: {len(result.get('new_columns', []))}\n"
+                f"📈 Новые строки: {result.get('new_rows_count', 0)}\n\n"
+                f"💡 Данные таблицы были заменены на новые.",
+                parse_mode='Markdown',
+                reply_markup=get_main_keyboard()
+            )
+        else:
+            await message.answer(
+                f"❌ Ошибка при обновлении таблицы: {result.get('error', 'Неизвестная ошибка')}",
+                reply_markup=get_main_keyboard()
+            )
+
+        # Сбрасываем состояние
+        await state.clear()
+
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при обновлении таблицы: {str(e)}", reply_markup=get_main_keyboard())
+        
+        # Очистка временного файла в случае ошибки
+        temp_path = f"temp_update_{user_id}_*"
+        for temp_file in glob.glob(temp_path):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        await state.clear()
+
 @files_router.message(StateFilter(TableStates.waiting_table_file))
 async def handle_wrong_input(message: Message, state: FSMContext):
     """Обработчик неправильного ввода в состоянии ожидания файла"""
     await message.answer(
         f"❌ Пожалуйста, отправьте файл таблицы.\n\n"
+        f"📁 **Поддерживаемые форматы:**\n"
+        f"• CSV (.csv)\n"
+        f"• JSON (.json)\n"
+        f"• Excel (.xlsx, .xls)\n\n"
+        f"💡 Файл должен быть отправлен как **документ** (не как фото или сжатый архив).\n"
+        f"Или нажмите /start для возврата в меню.",
+        parse_mode='Markdown',
+        reply_markup=get_main_keyboard()
+    )
+
+@files_router.message(StateFilter(TableStates.waiting_update_file))
+async def handle_wrong_update_input(message: Message, state: FSMContext):
+    """Обработчик неправильного ввода в состоянии ожидания файла для обновления"""
+    await message.answer(
+        f"❌ Пожалуйста, отправьте файл таблицы для обновления.\n\n"
         f"📁 **Поддерживаемые форматы:**\n"
         f"• CSV (.csv)\n"
         f"• JSON (.json)\n"
