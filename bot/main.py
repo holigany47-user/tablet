@@ -3,6 +3,7 @@ import logging
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -26,6 +27,19 @@ if not BOT_TOKEN:
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+
+# Постоянное меню
+def get_main_keyboard():
+    """Клавиатура основного меню"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
+            [KeyboardButton(text="🔄 Обновить таблицу"), KeyboardButton(text="❌ Удалить таблицу")],
+            [KeyboardButton(text="📤 Экспорт таблицы"), KeyboardButton(text="ℹ️ Помощь")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
 
 # Импортируем и регистрируем роутеры
 from bot.handlers.start import start_router
