@@ -1,6 +1,7 @@
 import logging
 import pandas as pd
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -130,3 +131,77 @@ def validate_excel_headers(headers: List[str]) -> bool:
     except Exception as e:
         logger.error(f"❌ Ошибка при валидации заголовков Excel: {e}")
         return False
+
+def validate_file_size(file_path: str, max_size_mb: int = 10) -> Tuple[bool, str]:
+    """
+    Проверяет размер файла
+    """
+    try:
+        file_size = os.path.getsize(file_path)
+        file_size_mb = file_size / (1024 * 1024)
+        
+        if file_size_mb > max_size_mb:
+            return False, f"Размер файла ({file_size_mb:.1f} MB) превышает максимальный допустимый ({max_size_mb} MB)"
+        
+        return True, f"Размер файла: {file_size_mb:.1f} MB"
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке размера файла: {e}")
+        return False, f"Ошибка проверки размера файла: {str(e)}"
+
+def validate_excel_file(file_path: str) -> Tuple[bool, List[str]]:
+    """
+    Проверяет Excel файл на корректность
+    """
+    errors = []
+    
+    try:
+        # Попытка прочитать файл
+        df = pd.read_excel(file_path)
+        
+        # Проверка на пустой файл
+        if df.empty:
+            errors.append("Excel файл пустой")
+            return False, errors
+        
+        # Проверка структуры
+        validation_result = validate_dataframe_structure(df)
+        if not validation_result['is_valid']:
+            errors.extend(validation_result['errors'])
+        
+        return len(errors) == 0, errors
+        
+    except Exception as e:
+        error_msg = f"Ошибка чтения Excel файла: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        errors.append(error_msg)
+        return False, errors
+
+def validate_table_file(file_path: str, file_extension: str) -> Tuple[bool, List[str]]:
+    """
+    Общая валидация табличных файлов
+    """
+    errors = []
+    
+    try:
+        # Проверка размера файла
+        size_valid, size_msg = validate_file_size(file_path)
+        if not size_valid:
+            errors.append(size_msg)
+        
+        # Специфичные проверки для разных форматов
+        if file_extension in ['.xlsx', '.xls']:
+            excel_valid, excel_errors = validate_excel_file(file_path)
+            if not excel_valid:
+                errors.extend(excel_errors)
+        
+        # Для CSV и JSON полагаемся на базовое чтение файла
+        # Если файл прочитается без ошибок - он валиден
+        
+        return len(errors) == 0, errors
+        
+    except Exception as e:
+        error_msg = f"Ошибка валидации файла: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        errors.append(error_msg)
+        return False, errors
