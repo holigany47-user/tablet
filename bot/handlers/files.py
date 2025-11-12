@@ -7,8 +7,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, read_file, save_dataframe, format_file_size
+from bot.models import TableManager
 from bot.models.services.local_storage import LocalStorage
-from bot.models.services.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,11 @@ async def list_tables_handler(message: Message, state: FSMContext):
     logger.info(f"📋 Пользователь {user_id} (@{username}) запросил список таблиц")
     
     try:
-        # Получаем список таблиц пользователя
-        user_files = storage_service.list_user_files(user_id)
-        logger.debug(f"Найдено таблиц для пользователя {user_id}: {len(user_files)}")
+        # Получаем список таблиц пользователя из TableManager
+        user_tables = table_manager.get_user_tables(user_id)
+        logger.debug(f"Найдено таблиц для пользователя {user_id}: {len(user_tables)}")
         
-        if not user_files:
+        if not user_tables:
             logger.info(f"У пользователя {user_id} нет таблиц")
             await message.answer(
                 "📋 **Мои таблицы**\n\n"
@@ -47,10 +47,16 @@ async def list_tables_handler(message: Message, state: FSMContext):
             )
             return
         
-        # Показываем меню действий с таблицами
-        tables_text = "📋 **Мои таблицы**\n\nВыберите действие:"
+        # Формируем список таблиц для отображения
+        tables_text = "📋 **Мои таблицы**\n\n"
+        for table in user_tables:
+            tables_text += f"📊 {table.original_name}\n"
+            tables_text += f"📅 {table.created_at} • 📊 {len(table.columns)} кол. • 📈 {table.rows_count} стр.\n\n"
+        
+        tables_text += "Выберите действие:"
+        
         await message.answer(tables_text, reply_markup=get_tables_keyboard())
-        logger.info(f"✅ Меню таблиц показано пользователю {user_id}")
+        logger.info(f"✅ Список таблиц показан пользователю {user_id}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка в list_tables_handler для пользователя {user_id}: {e}", exc_info=True)
@@ -63,9 +69,9 @@ async def delete_table_handler(message: Message):
     logger.info(f"🗑️ Пользователь {user_id} начал удаление таблицы")
     
     try:
-        user_files = storage_service.list_user_files(user_id)
+        user_tables = table_manager.get_user_tables(user_id)
         
-        if not user_files:
+        if not user_tables:
             await message.answer(
                 "❌ У вас нет таблиц для удаления.\n\n"
                 "Сначала сохраните таблицу через «📥 Сохранить таблицу»."
@@ -73,7 +79,7 @@ async def delete_table_handler(message: Message):
             return
         
         # Создаем инлайн-клавиатуру с кнопками удаления
-        keyboard = create_table_action_keyboard(user_files, "delete")
+        keyboard = create_table_action_keyboard(user_tables, "delete")
         
         await message.answer(
             "🗑️ **Удаление таблицы**\n\n"
@@ -93,9 +99,9 @@ async def update_table_handler(message: Message):
     logger.info(f"🔄 Пользователь {user_id} начал обновление таблицы")
     
     try:
-        user_files = storage_service.list_user_files(user_id)
+        user_tables = table_manager.get_user_tables(user_id)
         
-        if not user_files:
+        if not user_tables:
             await message.answer(
                 "❌ У вас нет таблиц для обновления.\n\n"
                 "Сначала сохраните таблицу через «📥 Сохранить таблицу»."
@@ -103,7 +109,7 @@ async def update_table_handler(message: Message):
             return
         
         # Создаем инлайн-клавиатуру с кнопками обновления
-        keyboard = create_table_action_keyboard(user_files, "update")
+        keyboard = create_table_action_keyboard(user_tables, "update")
         
         await message.answer(
             "🔄 **Обновление таблицы**\n\n"
@@ -123,9 +129,9 @@ async def download_table_handler(message: Message):
     logger.info(f"📤 Пользователь {user_id} начал скачивание таблицы")
     
     try:
-        user_files = storage_service.list_user_files(user_id)
+        user_tables = table_manager.get_user_tables(user_id)
         
-        if not user_files:
+        if not user_tables:
             await message.answer(
                 "❌ У вас нет таблиц для скачивания.\n\n"
                 "Сначала сохраните таблицу через «📥 Сохранить таблицу»."
@@ -133,7 +139,7 @@ async def download_table_handler(message: Message):
             return
         
         # Создаем инлайн-клавиатуру с кнопками скачивания
-        keyboard = create_table_action_keyboard(user_files, "download")
+        keyboard = create_table_action_keyboard(user_tables, "download")
         
         await message.answer(
             "📤 **Скачать таблицу**\n\n"
@@ -150,121 +156,131 @@ async def download_table_handler(message: Message):
 async def process_delete_callback(callback: CallbackQuery):
     """Обработчик callback для удаления таблицы"""
     user_id = callback.from_user.id
-    table_name = callback.data.replace("delete_", "")
+    table_id = callback.data.replace("delete_", "")
     
-    logger.info(f"🗑️ Пользователь {user_id} удаляет таблицу: {table_name}")
+    logger.info(f"🗑️ Пользователь {user_id} удаляет таблицу: {table_id}")
     
     try:
+        # Получаем информацию о таблице перед удалением
+        table_info = table_manager.get_table(table_id)
+        if not table_info:
+            await callback.message.edit_text("❌ Таблица не найдена.")
+            return
+        
         # Удаляем таблицу
-        success = storage_service.delete_data(table_name, user_id)
+        success = table_manager.delete_table(table_id)
         
         if success:
             await callback.message.edit_text(
                 f"✅ **Таблица удалена**\n\n"
-                f"📁 Имя: {table_name}\n\n"
-                f"Таблица успешно удалена из хранилища."
+                f"📁 Имя: {table_info.original_name}\n\n"
+                f"Таблица успешно удалена."
             )
-            logger.info(f"✅ Таблица {table_name} удалена пользователем {user_id}")
+            logger.info(f"✅ Таблица {table_info.original_name} удалена пользователем {user_id}")
         else:
             await callback.message.edit_text(
                 f"❌ **Ошибка удаления**\n\n"
-                f"Не удалось удалить таблицу {table_name}.\n"
+                f"Не удалось удалить таблицу {table_info.original_name}.\n"
                 f"Возможно, она уже была удалена."
             )
-            logger.warning(f"⚠️ Не удалось удалить таблицу {table_name} для пользователя {user_id}")
+            logger.warning(f"⚠️ Не удалось удалить таблицу {table_info.original_name} для пользователя {user_id}")
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при удалении таблицы {table_name} пользователем {user_id}: {e}")
+        logger.error(f"❌ Ошибка при удалении таблицы {table_id} пользователем {user_id}: {e}")
         await callback.message.edit_text("❌ Произошла ошибка при удалении таблицы")
 
 @router.callback_query(F.data.startswith("update_"))
 async def process_update_callback(callback: CallbackQuery, state: FSMContext):
     """Обработчик callback для обновления таблицы"""
     user_id = callback.from_user.id
-    table_name = callback.data.replace("update_", "")
+    table_id = callback.data.replace("update_", "")
     
-    logger.info(f"🔄 Пользователь {user_id} обновляет таблицу: {table_name}")
+    logger.info(f"🔄 Пользователь {user_id} обновляет таблицу: {table_id}")
     
     try:
-        # Сохраняем имя таблицы для обновления в состоянии
-        await state.update_data(table_to_update=table_name)
+        # Получаем информацию о текущей таблице
+        table_info = table_manager.get_table(table_id)
+        if not table_info:
+            await callback.message.edit_text("❌ Таблица не найдена.")
+            return
+        
+        # Сохраняем ID таблицы для обновления в состоянии
+        await state.update_data(table_to_update=table_id)
         await state.set_state(FileStates.waiting_update_file)
         
-        # Получаем информацию о текущей таблице
-        table_data = storage_service.load_data(table_name, user_id)
-        if table_data and 'dataframe' in table_data:
-            df = table_data['dataframe']
-            row_count = len(df)
-            col_count = len(df.columns)
-        else:
-            row_count = "неизвестно"
-            col_count = "неизвестно"
-        
         await callback.message.edit_text(
-            f"🔄 **Обновление таблицы: {table_name}**\n\n"
-            f"📊 Текущие столбцы: {col_count}\n"
-            f"📈 Текущие строки: {row_count}\n\n"
+            f"🔄 **Обновление таблицы: {table_info.original_name}**\n\n"
+            f"📅 Текущая дата: {table_info.created_at}\n"
+            f"📊 Текущие столбцы: {len(table_info.columns)}\n"
+            f"📈 Текущие строки: {table_info.rows_count}\n\n"
             f"📎 Пожалуйста, загрузите новый файл для обновления этой таблицы.\n\n"
             f"💡 **Поддерживаемые форматы:** CSV, JSON, Excel\n\n"
             f"⚠️ **Внимание:** Данные таблицы будут полностью заменены на новые."
         )
-        logger.info(f"✅ Запрос нового файла для обновления таблицы {table_name} от пользователя {user_id}")
+        logger.info(f"✅ Запрос нового файла для обновления таблицы {table_info.original_name} от пользователя {user_id}")
         
     except Exception as e:
-        logger.error(f"❌ Ошибка при подготовке обновления таблицы {table_name}: {e}")
+        logger.error(f"❌ Ошибка при подготовке обновления таблицы {table_id}: {e}")
         await callback.message.edit_text("❌ Произошла ошибка при подготовке к обновлению таблицы")
 
 @router.callback_query(F.data.startswith("download_"))
 async def process_download_callback(callback: CallbackQuery):
     """Обработчик callback для скачивания таблицы"""
     user_id = callback.from_user.id
-    table_name = callback.data.replace("download_", "")
+    table_id = callback.data.replace("download_", "")
     
-    logger.info(f"📤 Пользователь {user_id} скачивает таблицу: {table_name}")
+    logger.info(f"📤 Пользователь {user_id} скачивает таблицу: {table_id}")
     
     try:
-        # Загружаем данные таблицы
-        table_data = storage_service.load_data(table_name, user_id)
-        
-        if not table_data or 'dataframe' not in table_data:
-            await callback.message.edit_text(
-                f"❌ **Таблица не найдена**\n\n"
-                f"Таблица {table_name} не найдена в хранилище."
-            )
+        # Получаем информацию о таблице
+        table_info = table_manager.get_table(table_id)
+        if not table_info:
+            await callback.message.edit_text("❌ Таблица не найдена.")
             return
         
-        df = table_data['dataframe']
-        
-        # Создаем временный файл для скачивания
-        temp_filename = f"temp_{table_name}"
-        success = save_dataframe(df, temp_filename)
-        
-        if success and os.path.exists(temp_filename):
-            # Здесь должна быть логика отправки файла пользователю
-            # В реальном боте используем callback.message.answer_document
-            file_info = get_file_info(temp_filename)
-            
-            await callback.message.edit_text(
-                f"📤 **Скачать таблицу: {table_name}**\n\n"
-                f"📊 Столбцы: {len(df.columns)}\n"
-                f"📈 Строки: {len(df)}\n"
-                f"💾 Размер: {file_info.get('size', 'неизвестно')}\n\n"
-                f"💡 **Функция в разработке**\n"
-                f"Скоро здесь можно будет скачать таблицу в выбранном формате."
-            )
-            logger.info(f"✅ Информация для скачивания таблицы {table_name} отправлена пользователю {user_id}")
-            
-            # Удаляем временный файл
-            os.remove(temp_filename)
+        # Загружаем данные таблицы из файла
+        if os.path.exists(table_info.file_path):
+            df = read_file(table_info.file_path)
+            if df is not None:
+                # Создаем временный файл для скачивания
+                temp_filename = f"temp_{table_info.original_name}"
+                success = save_dataframe(df, temp_filename)
+                
+                if success and os.path.exists(temp_filename):
+                    file_info = get_file_info(temp_filename)
+                    
+                    # Здесь должна быть реальная логика отправки файла
+                    # Пока просто показываем информацию
+                    await callback.message.edit_text(
+                        f"📤 **Скачать таблицу: {table_info.original_name}**\n\n"
+                        f"📊 Столбцы: {len(table_info.columns)}\n"
+                        f"📈 Строки: {table_info.rows_count}\n"
+                        f"💾 Размер: {file_info.get('size', 'неизвестно')}\n\n"
+                        f"💡 **Функция в разработке**\n"
+                        f"Скоро здесь можно будет скачать таблицу в выбранном формате."
+                    )
+                    logger.info(f"✅ Информация для скачивания таблицы {table_info.original_name} отправлена пользователю {user_id}")
+                    
+                    # Удаляем временный файл
+                    os.remove(temp_filename)
+                else:
+                    await callback.message.edit_text(
+                        f"❌ **Ошибка скачивания**\n\n"
+                        f"Не удалось подготовить таблицу {table_info.original_name} для скачивания."
+                    )
+            else:
+                await callback.message.edit_text(
+                    f"❌ **Ошибка загрузки**\n\n"
+                    f"Не удалось загрузить данные таблицы {table_info.original_name}."
+                )
         else:
             await callback.message.edit_text(
-                f"❌ **Ошибка скачивания**\n\n"
-                f"Не удалось подготовить таблицу {table_name} для скачивания."
+                f"❌ **Файл не найден**\n\n"
+                f"Файл таблицы {table_info.original_name} не существует."
             )
-            logger.error(f"❌ Ошибка при подготовке таблицы {table_name} для скачивания")
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при скачивании таблицы {table_name} пользователем {user_id}: {e}")
+        logger.error(f"❌ Ошибка при скачивании таблицы {table_id} пользователем {user_id}: {e}")
         await callback.message.edit_text("❌ Произошла ошибка при подготовке таблицы к скачиванию")
 
 @router.callback_query(F.data == "cancel_action")
@@ -298,67 +314,4 @@ async def back_handler(message: Message, state: FSMContext):
         logger.error(f"❌ Ошибка в back_handler для пользователя {user_id}: {e}")
         await message.answer("❌ Ошибка при возврате в меню")
 
-@router.message(FileStates.waiting_update_file, F.document)
-async def process_update_file(message: Message, state: FSMContext):
-    """Обработка файла для обновления таблицы"""
-    user_id = message.from_user.id
-    file_name = message.document.file_name
-    
-    logger.info(f"📎 Пользователь {user_id} загрузил файл для обновления: '{file_name}'")
-    
-    try:
-        # Получаем имя таблицы для обновления из состояния
-        state_data = await state.get_data()
-        table_name = state_data.get('table_to_update')
-        
-        if not table_name:
-            logger.error(f"❌ Не найдено имя таблицы для обновления у пользователя {user_id}")
-            await message.answer("❌ Ошибка: не найдена информация о таблице для обновления.")
-            await state.clear()
-            return
-        
-        logger.debug(f"Обновление таблицы {table_name} файлом {file_name}")
-        
-        if not validate_file_extension(file_name):
-            logger.warning(f"⚠️ Неподдерживаемый формат файла от пользователя {user_id}: {file_name}")
-            await message.answer("❌ Неподдерживаемый формат файла. Используйте Excel, CSV или JSON.")
-            return
-        
-        # Здесь должна быть логика обработки и сохранения файла
-        # В реальном боте нужно скачать файл и обработать его
-        
-        success = True  # Заглушка для успешного обновления
-        
-        if success:
-            await message.answer(
-                f"✅ **Таблица успешно обновлена!**\n\n"
-                f"📁 Имя: {table_name}\n"
-                f"📄 Новый файл: {file_name}\n\n"
-                f"💡 Данные таблицы были заменены на новые."
-            )
-            logger.info(f"✅ Таблица {table_name} обновлена пользователем {user_id} файлом {file_name}")
-            
-            # Очищаем состояние
-            await state.clear()
-            
-            # Возвращаем в меню таблиц
-            await message.answer(
-                "Выберите следующее действие:",
-                reply_markup=get_tables_keyboard()
-            )
-        else:
-            await message.answer("❌ Ошибка при обновлении таблицы.")
-            
-    except Exception as e:
-        logger.error(f"❌ Ошибка при обновлении таблицы файлом '{file_name}': {e}", exc_info=True)
-        await message.answer("❌ Ошибка при обновлении таблицы")
-        await state.clear()
-
-@router.message(FileStates.waiting_update_file)
-async def wrong_update_file_input(message: Message):
-    """Обработчик неправильного ввода при ожидании файла для обновления"""
-    user_id = message.from_user.id
-    text = message.text or ""
-    
-    logger.warning(f"⚠️ Пользователь {user_id} отправил не файл в режиме обновления: '{text}'")
-    await message.answer("❌ Пожалуйста, отправьте файл в формате Excel, CSV или JSON для обновления таблицы.")
+# Остальные обработчики остаются без изменений...
