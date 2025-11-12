@@ -91,30 +91,31 @@ async def close_menu_handler(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"❌ Ошибка при закрытии меню пользователем {user_id}: {e}")
 
-@router.message(MainMenu.main)
-async def main_menu_handler(message: Message):
-    user_id = message.from_user.id
-    text = message.text or ""
+# УБЕРИТЕ ЭТОТ ОБРАБОТЧИК - он перехватывает все сообщения и мешает работе!
+# @router.message(MainMenu.main)
+# async def main_menu_handler(message: Message):
+#     user_id = message.from_user.id
+#     text = message.text or ""
     
-    logger.info(f"🎯 Действие в главном меню от пользователя {user_id}: '{text}'")
+#     logger.info(f"🎯 Действие в главном меню от пользователя {user_id}: '{text}'")
     
-    try:
-        if message.text == "📥 Сохранить таблицу":
-            logger.debug(f"Пользователь {user_id} выбрал 'Сохранить таблицу'")
-            await message.answer("📥 Переходим к сохранению таблицы...")
+#     try:
+#         if message.text == "📥 Сохранить таблицу":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Сохранить таблицу'")
+#             await message.answer("📥 Переходим к сохранению таблицы...")
             
-        elif message.text == "📋 Мои таблицы":
-            logger.debug(f"Пользователь {user_id} выбрал 'Мои таблицы'")
-            await message.answer("📋 Переходим к просмотру таблиц...")
+#         elif message.text == "📋 Мои таблицы":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Мои таблицы'")
+#             await message.answer("📋 Переходим к просмотру таблиц...")
             
-        elif message.text == "ℹ️ Помощь":
-            logger.debug(f"Пользователь {user_id} выбрал 'Помощь'")
-            await message.answer("ℹ️ Открываю справку...")
+#         elif message.text == "ℹ️ Помощь":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Помощь'")
+#             await message.answer("ℹ️ Открываю справку...")
             
-        else:
-            logger.warning(f"⚠️ Неизвестная команда в меню от пользователя {user_id}: '{text}'")
-            await message.answer("❌ Неизвестная команда. Используйте кнопки меню.")
+#         else:
+#             logger.warning(f"⚠️ Неизвестная команда в меню от пользователя {user_id}: '{text}'")
+#             await message.answer("❌ Неизвестная команда. Используйте кнопки меню.")
             
-    except Exception as e:
-        logger.error(f"❌ Ошибка в main_menu_handler для пользователя {user_id}: {e}", exc_info=True)
-        await message.answer("❌ Произошла ошибка при обработке команды")
+#     except Exception as e:
+#         logger.error(f"❌ Ошибка в main_menu_handler для пользователя {user_id}: {e}", exc_info=True)
+#         await message.answer("❌ Произошла ошибка при обработке команды")
