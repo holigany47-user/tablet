@@ -6,7 +6,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
-from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, read_file, save_dataframe, format_file_size
+from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, format_file_size
 from bot.services.local_storage import LocalStorage
 from bot.services.table_manager import AdvancedTableManager
 
@@ -61,20 +61,38 @@ async def process_save_file(message: Message, state: FSMContext):
             await message.answer("❌ Неподдерживаемый формат файла. Используйте Excel, CSV или JSON.")
             return
         
-        # Здесь должна быть реальная логика сохранения файла через AdvancedTableManager
-        # Пока просто сообщим, что файл получен
+        # Скачиваем файл от пользователя
+        file_info = await message.bot.get_file(message.document.file_id)
+        downloaded_file = await message.bot.download_file(file_info.file_path)
+        
+        # Сохраняем временный файл
+        temp_path = f"temp_{user_id}_{file_name}"
+        with open(temp_path, 'wb') as new_file:
+            new_file.write(downloaded_file.getvalue())
+        
+        # Сохраняем таблицу через AdvancedTableManager
+        table_info = table_manager.save_table(user_id, temp_path, file_name)
+        
+        # Удаляем временный файл
+        os.remove(temp_path)
+        
         await message.answer(
-            f"✅ **Файл получен:** {file_name}\n\n"
-            f"Файл принят к обработке. Скоро здесь будет сохранение."
+            f"✅ **Таблица успешно сохранена!**\n\n"
+            f"📁 Имя: {table_info.original_name}\n"
+            f"📅 Дата: {table_info.created_at}\n"
+            f"📊 Столбцы: {len(table_info.columns)}\n"
+            f"📈 Строки: {table_info.rows_count}\n"
+            f"💾 Размер: {format_file_size(table_info.file_size)}\n\n"
+            f"💡 Таблица сохранена в формате Excel с датой в названии."
         )
-        logger.info(f"Файл {file_name} принят от пользователя {user_id}")
+        logger.info(f"✅ Таблица {table_info.original_name} сохранена пользователем {user_id}")
         
         # Сбрасываем состояние
         await state.clear()
         
     except Exception as e:
-        logger.error(f"❌ Ошибка при обработке файла '{file_name}': {e}", exc_info=True)
-        await message.answer("❌ Ошибка при обработке файла")
+        logger.error(f"❌ Ошибка при сохранении файла '{file_name}': {e}", exc_info=True)
+        await message.answer("❌ Ошибка при сохранении таблицы")
         await state.clear()
 
 @router.message(FileStates.waiting_file)
@@ -301,46 +319,32 @@ async def process_download_callback(callback: CallbackQuery):
             await callback.message.edit_text("❌ Таблица не найдена.")
             return
         
-        # Загружаем данные таблицы из файла
+        # Проверяем существование файла
         if os.path.exists(table_info.file_path):
-            df = read_file(table_info.file_path)
-            if df is not None:
-                # Создаем временный файл для скачивания
-                temp_filename = f"temp_{table_info.original_name}"
-                success = save_dataframe(df, temp_filename)
-                
-                if success and os.path.exists(temp_filename):
-                    file_info = get_file_info(temp_filename)
-                    
-                    # Здесь должна быть реальная логика отправки файла
-                    # Пока просто показываем информацию
-                    await callback.message.edit_text(
-                        f"📤 **Скачать таблицу: {table_info.original_name}**\n\n"
+            # Отправляем файл пользователю
+            with open(table_info.file_path, 'rb') as file:
+                await callback.message.answer_document(
+                    document=file,
+                    caption=(
+                        f"📤 **Таблица: {table_info.original_name}**\n\n"
                         f"📊 Столбцы: {len(table_info.columns)}\n"
                         f"📈 Строки: {table_info.rows_count}\n"
-                        f"💾 Размер: {file_info.get('size', 'неизвестно')}\n\n"
-                        f"💡 **Функция в разработке**\n"
-                        f"Скоро здесь можно будет скачать таблицу в выбранном формате."
+                        f"📅 Дата сохранения: {table_info.created_at}"
                     )
-                    logger.info(f"✅ Информация для скачивания таблицы {table_info.original_name} отправлена пользователю {user_id}")
-                    
-                    # Удаляем временный файл
-                    os.remove(temp_filename)
-                else:
-                    await callback.message.edit_text(
-                        f"❌ **Ошибка скачивания**\n\n"
-                        f"Не удалось подготовить таблицу {table_info.original_name} для скачивания."
-                    )
-            else:
-                await callback.message.edit_text(
-                    f"❌ **Ошибка загрузки**\n\n"
-                    f"Не удалось загрузить данные таблицы {table_info.original_name}."
                 )
+            logger.info(f"✅ Таблица {table_info.original_name} отправлена пользователю {user_id}")
+            
+            # Редактируем исходное сообщение
+            await callback.message.edit_text(
+                f"✅ **Таблица отправлена:** {table_info.original_name}\n\n"
+                f"Файл успешно загружен и отправлен."
+            )
         else:
             await callback.message.edit_text(
                 f"❌ **Файл не найден**\n\n"
                 f"Файл таблицы {table_info.original_name} не существует."
             )
+            logger.error(f"❌ Файл таблицы не существует: {table_info.file_path}")
             
     except Exception as e:
         logger.error(f"❌ Ошибка при скачивании таблицы {table_id} пользователем {user_id}: {e}")
@@ -386,12 +390,12 @@ async def process_update_file(message: Message, state: FSMContext):
     logger.info(f"📎 Пользователь {user_id} загрузил файл для обновления: '{file_name}'")
     
     try:
-        # Получаем имя таблицы для обновления из состояния
+        # Получаем ID таблицы для обновления из состояния
         state_data = await state.get_data()
         table_id = state_data.get('table_to_update')
         
         if not table_id:
-            logger.error(f"❌ Не найдено имя таблицы для обновления у пользователя {user_id}")
+            logger.error(f"❌ Не найдено ID таблицы для обновления у пользователя {user_id}")
             await message.answer("❌ Ошибка: не найдена информация о таблице для обновления.")
             await state.clear()
             return
@@ -403,30 +407,45 @@ async def process_update_file(message: Message, state: FSMContext):
             await message.answer("❌ Неподдерживаемый формат файла. Используйте Excel, CSV или JSON.")
             return
         
-        # Здесь должна быть логика обработки и сохранения файла
-        # В реальном боте нужно скачать файл и обработать его
+        # Скачиваем новый файл
+        file_info = await message.bot.get_file(message.document.file_id)
+        downloaded_file = await message.bot.download_file(file_info.file_path)
         
-        success = True  # Заглушка для успешного обновления
+        # Сохраняем временный файл
+        temp_path = f"temp_update_{user_id}_{file_name}"
+        with open(temp_path, 'wb') as new_file:
+            new_file.write(downloaded_file.getvalue())
+        
+        # Обновляем таблицу через AdvancedTableManager
+        success, result = table_manager.update_table(table_id, temp_path, 'replace')
+        
+        # Удаляем временный файл
+        os.remove(temp_path)
         
         if success:
             await message.answer(
                 f"✅ **Таблица успешно обновлена!**\n\n"
-                f"📁 Имя: {table_id}\n"
-                f"📄 Новый файл: {file_name}\n\n"
+                f"📁 Имя: {result.get('message', 'Таблица обновлена')}\n"
+                f"📊 Новые столбцы: {len(result.get('new_columns', []))}\n"
+                f"📈 Новые строки: {result.get('new_rows_count', 0)}\n\n"
                 f"💡 Данные таблицы были заменены на новые."
             )
             logger.info(f"✅ Таблица {table_id} обновлена пользователем {user_id} файлом {file_name}")
-            
-            # Очищаем состояние
-            await state.clear()
-            
-            # Возвращаем в меню таблиц
-            await message.answer(
-                "Выберите следующее действие:",
-                reply_markup=get_tables_keyboard()
-            )
         else:
-            await message.answer("❌ Ошибка при обновлении таблицы.")
+            await message.answer(
+                f"❌ **Ошибка обновления**\n\n"
+                f"Не удалось обновить таблицу: {result.get('error', 'Неизвестная ошибка')}"
+            )
+            logger.error(f"❌ Ошибка при обновлении таблицы {table_id}: {result.get('error')}")
+        
+        # Очищаем состояние
+        await state.clear()
+        
+        # Возвращаем в меню таблиц
+        await message.answer(
+            "Выберите следующее действие:",
+            reply_markup=get_tables_keyboard()
+        )
             
     except Exception as e:
         logger.error(f"❌ Ошибка при обновлении таблицы файлом '{file_name}': {e}", exc_info=True)
