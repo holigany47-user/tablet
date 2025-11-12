@@ -1,19 +1,28 @@
 import os
 import glob
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 
-from bot.services.table_manager import AdvancedTableManager
+# Используем единый менеджер
+from bot.services import table_manager
 from bot.handlers.states import TableStates
 from bot.utils.helpers import validate_file_extension, safe_filename
 
 files_router = Router()
-table_manager = AdvancedTableManager()
 
-# Обновленные поддерживаемые форматы
-SUPPORTED_EXTENSIONS = ['.csv', '.json', '.xlsx', '.xls']
+def get_main_keyboard():
+    """Клавиатура основного меню"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
+            [KeyboardButton(text="🔄 Обновить таблицу"), KeyboardButton(text="❌ Удалить таблицу")],
+            [KeyboardButton(text="📤 Экспорт таблицы"), KeyboardButton(text="ℹ️ Помощь")]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
 
 @files_router.message(StateFilter(TableStates.waiting_table_file), F.document)
 async def handle_table_file(message: Message, state: FSMContext):
@@ -26,11 +35,11 @@ async def handle_table_file(message: Message, state: FSMContext):
             file = await message.bot.get_file(document.file_id)
             original_name = document.file_name or "unknown_file"
         else:
-            await message.answer("❌ Пожалуйста, отправьте файл как документ.")
+            await message.answer("❌ Пожалуйста, отправьте файл как документ.", reply_markup=get_main_keyboard())
             return
 
         # Проверка формата файла
-        if not validate_file_extension(original_name, SUPPORTED_EXTENSIONS):
+        if not validate_file_extension(original_name, ['.csv', '.json', '.xlsx', '.xls']):
             await message.answer(
                 f"❌ Неподдерживаемый формат файла.\n\n"
                 f"📁 **Поддерживаемые форматы:**\n"
@@ -38,7 +47,8 @@ async def handle_table_file(message: Message, state: FSMContext):
                 f"• JSON (.json)\n" 
                 f"• Excel (.xlsx, .xls)\n\n"
                 f"💡 Файл должен быть отправлен как документ (не как фото или сжатый архив).",
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                reply_markup=get_main_keyboard()
             )
             return
 
@@ -62,7 +72,8 @@ async def handle_table_file(message: Message, state: FSMContext):
             f"📈 Строки: {table_info.rows_count}\n"
             f"💾 Размер: {table_info.file_size / 1024:.1f} KB\n\n"
             f"💡 Таблица сохранена в формате Excel с датой в названии.",
-            parse_mode='Markdown'
+            parse_mode='Markdown',
+            reply_markup=get_main_keyboard()
         )
 
         # Сбрасываем состояние
@@ -77,7 +88,7 @@ async def handle_table_file(message: Message, state: FSMContext):
         elif "No columns to parse from file" in str(e):
             error_message += "\n\n💡 Файл не содержит данных или имеет неправильную структуру."
         
-        await message.answer(error_message)
+        await message.answer(error_message, reply_markup=get_main_keyboard())
         
         # Очистка временного файла в случае ошибки
         temp_path = f"temp_{user_id}_*"
@@ -99,5 +110,6 @@ async def handle_wrong_input(message: Message, state: FSMContext):
         f"• Excel (.xlsx, .xls)\n\n"
         f"💡 Файл должен быть отправлен как **документ** (не как фото или сжатый архив).\n"
         f"Или нажмите /start для возврата в меню.",
-        parse_mode='Markdown'
+        parse_mode='Markdown',
+        reply_markup=get_main_keyboard()
     )
