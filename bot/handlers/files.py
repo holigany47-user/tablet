@@ -7,14 +7,14 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, read_file, save_dataframe, format_file_size
-from bot.models import TableManager
 from bot.services.local_storage import LocalStorage
+from bot.services.table_manager import AdvancedTableManager
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 storage_service = LocalStorage()
-table_manager = TableManager()
+table_manager = AdvancedTableManager()
 
 class FileStates(StatesGroup):
     waiting_file = State()
