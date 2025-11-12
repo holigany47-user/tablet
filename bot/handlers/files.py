@@ -12,8 +12,8 @@ from bot.utils.helpers import validate_file_extension, safe_filename
 files_router = Router()
 table_manager = AdvancedTableManager()
 
-# Поддерживаемые форматы
-SUPPORTED_EXTENSIONS = ['.csv', '.json']
+# Обновленные поддерживаемые форматы
+SUPPORTED_EXTENSIONS = ['.csv', '.json', '.xlsx', '.xls']
 
 @files_router.message(StateFilter(TableStates.waiting_table_file), F.document)
 async def handle_table_file(message: Message, state: FSMContext):
@@ -32,8 +32,13 @@ async def handle_table_file(message: Message, state: FSMContext):
         # Проверка формата файла
         if not validate_file_extension(original_name, SUPPORTED_EXTENSIONS):
             await message.answer(
-                f"❌ Неподдерживаемый формат файла.\n"
-                f"Поддерживаемые форматы: {', '.join(SUPPORTED_EXTENSIONS)}"
+                f"❌ Неподдерживаемый формат файла.\n\n"
+                f"📁 **Поддерживаемые форматы:**\n"
+                f"• CSV (.csv)\n"
+                f"• JSON (.json)\n" 
+                f"• Excel (.xlsx, .xls)\n\n"
+                f"💡 Файл должен быть отправлен как документ (не как фото или сжатый архив).",
+                parse_mode='Markdown'
             )
             return
 
@@ -55,7 +60,8 @@ async def handle_table_file(message: Message, state: FSMContext):
             f"📅 Дата: {table_info.created_at}\n"
             f"📊 Столбцы: {len(table_info.columns)}\n"
             f"📈 Строки: {table_info.rows_count}\n"
-            f"💾 Размер: {table_info.file_size / 1024:.1f} KB",
+            f"💾 Размер: {table_info.file_size / 1024:.1f} KB\n\n"
+            f"💡 Таблица сохранена в формате Excel с датой в названии.",
             parse_mode='Markdown'
         )
 
@@ -63,7 +69,15 @@ async def handle_table_file(message: Message, state: FSMContext):
         await state.clear()
 
     except Exception as e:
-        await message.answer(f"❌ Ошибка при сохранении таблицы: {str(e)}")
+        error_message = f"❌ Ошибка при сохранении таблицы: {str(e)}"
+        
+        # Более понятные сообщения об ошибках
+        if "Unsupported file format" in str(e):
+            error_message += "\n\n💡 Убедитесь, что файл не поврежден и имеет правильный формат."
+        elif "No columns to parse from file" in str(e):
+            error_message += "\n\n💡 Файл не содержит данных или имеет неправильную структуру."
+        
+        await message.answer(error_message)
         
         # Очистка временного файла в случае ошибки
         temp_path = f"temp_{user_id}_*"
@@ -78,6 +92,12 @@ async def handle_table_file(message: Message, state: FSMContext):
 async def handle_wrong_input(message: Message, state: FSMContext):
     """Обработчик неправильного ввода в состоянии ожидания файла"""
     await message.answer(
-        "❌ Пожалуйста, отправьте файл таблицы (CSV или JSON).\n"
-        "Или нажмите /start для возврата в меню."
+        f"❌ Пожалуйста, отправьте файл таблицы.\n\n"
+        f"📁 **Поддерживаемые форматы:**\n"
+        f"• CSV (.csv)\n"
+        f"• JSON (.json)\n"
+        f"• Excel (.xlsx, .xls)\n\n"
+        f"💡 Файл должен быть отправлен как **документ** (не как фото или сжатый архив).\n"
+        f"Или нажмите /start для возврата в меню.",
+        parse_mode='Markdown'
     )
