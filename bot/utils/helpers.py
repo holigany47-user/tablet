@@ -343,3 +343,28 @@ def get_conflict_rule_description(rule: str) -> str:
              "Использует новые названия, сохраняя старые как резерв"
     }
     return descriptions.get(rule, "❌ Неизвестное правило")
+def get_key_column_keyboard(columns: List[str], table_type: str = "common"):
+    """Клавиатура для выбора ключевого столбца"""
+    buttons = []
+    
+    # Кнопки для общих столбцов
+    for col in columns:
+        buttons.append([InlineKeyboardButton(text=f"🔑 {col}", callback_data=f"key_{col}")])
+    
+    # Дополнительные опции
+    if table_type == "common":
+        buttons.extend([
+            [InlineKeyboardButton(text="📋 Использовать все столбцы", callback_data="key_all_columns")],
+            [InlineKeyboardButton(text="🚫 Без ключа (добавить все)", callback_data="key_no_key")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_update")]
+        ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_key_column_description(key_option: str) -> str:
+    """Описание вариантов выбора ключевого столбца"""
+    descriptions = {
+        "all_columns": "📋 **Использовать все столбцы**\nСравнивает строки по всем общим столбцам (точное совпадение)",
+        "no_key": "🚫 **Без ключа (добавить все)**\nДобавляет все строки из новой таблицы (возможны дубликаты)",
+    }
+    return descriptions.get(key_option, f"🔑 **Ключевой столбец:** {key_option}")
