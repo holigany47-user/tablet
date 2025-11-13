@@ -3,10 +3,13 @@ import pandas as pd
 from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime
 import json
+import logging
 
 # Импорты из helpers
 from bot.utils.helpers import read_table_file, save_table_file, compare_tables, get_file_size, generate_timestamp
-from bot.models import TableInfo, TableManager
+from bot.models import TableInfo
+
+logger = logging.getLogger(__name__)
 
 class AdvancedTableManager:
     """Расширенный менеджер для работы с таблицами"""
@@ -65,11 +68,11 @@ class AdvancedTableManager:
             filename = f"{safe_name}_{current_date}_{generate_timestamp()}.xlsx"
             save_path = os.path.join(self.storage_path, filename)
             
-            # Сохранение файла
+            # Сохраняем файл
             save_table_file(df, save_path, 'xlsx')
             file_size = get_file_size(save_path)
             
-            # Создание TableInfo объекта (совместимость со старым кодом)
+            # Создание TableInfo объекта
             table_id = f"{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
             
             table_info = TableInfo(
@@ -91,6 +94,7 @@ class AdvancedTableManager:
             return table_info
             
         except Exception as e:
+            logger.error(f"❌ Ошибка сохранения таблицы: {e}")
             raise Exception(f"Ошибка сохранения таблицы: {e}")
     
     def get_user_tables(self, user_id: int) -> List[TableInfo]:
@@ -115,11 +119,11 @@ class AdvancedTableManager:
                 return True
             return False
         except Exception as e:
-            print(f"Ошибка при удалении таблицы: {e}")
+            logger.error(f"❌ Ошибка при удалении таблицы: {e}")
             return False
     
     def update_table(self, table_id: str, new_file_path: str, update_type: str = 'replace') -> Tuple[bool, Dict[str, Any]]:
-        """Обновление таблицы с различными стратегиями"""
+        """Обновление таблицы с различными стратегиями (старая версия для совместимости)"""
         try:
             table = self.get_table(table_id)
             if not table:
@@ -178,7 +182,22 @@ class AdvancedTableManager:
             }
             
         except Exception as e:
+            logger.error(f"❌ Ошибка обновления таблицы: {e}")
             return False, {"error": f"Ошибка обновления таблицы: {e}"}
+    
+    # НОВЫЕ МЕТОДЫ ДЛЯ СОВМЕСТИМОСТИ С НОВЫМ ФУНКЦИОНАЛОМ
+    
+    def read_table_file(self, file_path: str):
+        """Чтение таблицы из файла (для совместимости с новым функционалом)"""
+        return read_table_file(file_path)
+    
+    def save_table_file(self, df: pd.DataFrame, file_path: str, format: str):
+        """Сохранение таблицы в файл (для совместимости с новым функционалом)"""
+        return save_table_file(df, file_path, format)
+    
+    def get_file_size(self, file_path: str) -> int:
+        """Получение размера файла (для совместимости с новым функционалом)"""
+        return get_file_size(file_path)
     
     def export_table(self, table_id: str, format: str) -> Optional[str]:
         """Экспорт таблицы в другой формат"""
@@ -197,7 +216,7 @@ class AdvancedTableManager:
             return export_path
             
         except Exception as e:
-            print(f"Ошибка экспорта: {e}")
+            logger.error(f"❌ Ошибка экспорта: {e}")
             return None
     
     def get_table_preview(self, table_id: str, rows: int = 5) -> Optional[pd.DataFrame]:
@@ -211,5 +230,5 @@ class AdvancedTableManager:
             return df.head(rows)
             
         except Exception as e:
-            print(f"Ошибка получения превью: {e}")
+            logger.error(f"❌ Ошибка получения превью: {e}")
             return None
