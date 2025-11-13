@@ -1,69 +1,94 @@
-import os
+import asyncio
 import logging
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+import sys
+import os
+from os import getenv
 
-# Загрузка переменных окружения
+# Добавьте эти импорты для работы с .env
+from dotenv import load_dotenv
+
+# Загружаем переменные окружения из .env файла
 load_dotenv()
 
-# Настройка логирования
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
+
+# Импортируем роутеры напрямую из файлов
+from bot.handlers.start import router as start_router
+from bot.handlers.files import router as files_router
+
+# Настройка расширенного логирования
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
     handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
+        logging.FileHandler('bot_debug.log', encoding='utf-8', mode='w'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
+
+# Дополнительный логгер для ошибок
+error_logger = logging.getLogger('error_logger')
+error_handler = logging.FileHandler('bot_errors.log', encoding='utf-8', mode='w')
+error_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+error_logger.addHandler(error_handler)
+error_logger.setLevel(logging.ERROR)
+
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-if not BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN не установлен в .env файле")
-
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
-
-# Постоянное меню
-def get_main_keyboard():
-    """Клавиатура основного меню"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
-            [KeyboardButton(text="🔄 Обновить таблицу"), KeyboardButton(text="❌ Удалить таблицу")],
-            [KeyboardButton(text="📤 Экспорт таблицы"), KeyboardButton(text="ℹ️ Помощь")]
-        ],
-        resize_keyboard=True,
-        persistent=True
-    )
-
-# Импортируем и регистрируем роутеры
-from bot.handlers.start import start_router
-from bot.handlers.files import files_router
-
-dp.include_router(start_router)
-dp.include_router(files_router)
-
 async def main():
-    """Основная функция запуска бота"""
+    logger.info("🚀 === ЗАПУСК ТАБЛИЧНОГО БОТА ===")
+    
     try:
-        logger.info("Бот запущен...")
+        # Получение токена из переменных окружения
+        BOT_TOKEN = os.getenv('BOT_TOKEN')
+        logger.debug("Проверка переменной окружения BOT_TOKEN")
+        
+        if not BOT_TOKEN:
+            logger.critical("❌ BOT_TOKEN не найден в переменных окружения!")
+            error_logger.error("BOT_TOKEN отсутствует в окружении")
+            raise ValueError("BOT_TOKEN не установлен")
+            
+        logger.info(f"✅ Токен получен: {BOT_TOKEN[:10]}...")
+        logger.info(f"🔧 Режим: {getenv('BOT_ENV', 'development')}")
+        logger.debug(f"Текущая директория: {os.getcwd()}")
+        logger.debug(f"Python версия: {sys.version}")
+        
+        # Инициализация бота
+        logger.debug("Инициализация бота...")
+        bot = Bot(
+            token=BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        )
+        logger.info("✅ Бот инициализирован")
+        
+        # Инициализация диспетчера
+        logger.debug("Инициализация диспетчера и хранилища...")
+        storage = MemoryStorage()
+        dp = Dispatcher(storage=storage)
+        logger.info("✅ Диспетчер инициализирован")
+        
+        # Регистрация роутеров напрямую
+        logger.debug("Регистрация роутеров...")
+        dp.include_router(start_router)
+        dp.include_router(files_router)
+        logger.info("✅ Роутеры зарегистрированы")
+        
+        # Запуск бота
+        logger.info("🔄 Запуск поллинга...")
         await dp.start_polling(bot)
+        
     except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
+        logger.critical(f"💥 КРИТИЧЕСКАЯ ОШИБКА: {e}", exc_info=True)
+        error_logger.critical(f"Критическая ошибка при запуске: {e}", exc_info=True)
     finally:
-        logger.info("Бот остановлен")
-        await bot.session.close()
+        logger.info("🛑 Бот остановлен")
+        if 'bot' in locals():
+            await bot.session.close()
+            logger.debug("Сессия бота закрыта")
 
 if __name__ == "__main__":
-    import asyncio
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
+    logger.debug("Запуск asyncio event loop")
+    asyncio.run(main())

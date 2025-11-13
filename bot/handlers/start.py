@@ -1,171 +1,121 @@
-import os
+import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.filters import Command
+from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from aiogram.types import FSInputFile
 
-# Используем единый менеджер
-from bot.services import table_manager
-from bot.handlers.states import TableStates
+from bot.utils.helpers import get_main_keyboard
 
-start_router = Router()
+logger = logging.getLogger(__name__)
 
-def get_main_keyboard():
-    """Клавиатура основного меню"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
-            [KeyboardButton(text="🔄 Обновить таблицу"), KeyboardButton(text="❌ Удалить таблицу")],
-            [KeyboardButton(text="📤 Экспорт таблицы"), KeyboardButton(text="ℹ️ Помощь")]
-        ],
-        resize_keyboard=True,
-        persistent=True
-    )
+router = Router()
 
-@start_router.message(Command("start"))
-async def start_command(message: Message):
-    """Обработчик команды /start с инлайн-кнопками и постоянным меню"""
-    keyboard = [
-        [InlineKeyboardButton(text="📥 Сохранить таблицу", callback_data="save_table")],
-        [InlineKeyboardButton(text="📋 Мои таблицы", callback_data="list_tables")],
-        [InlineKeyboardButton(text="🔄 Обновить таблицу", callback_data="update_table")],
-        [InlineKeyboardButton(text="❌ Удалить таблицу", callback_data="delete_table")],
-        [InlineKeyboardButton(text="📤 Экспорт таблицы", callback_data="export_table")]
-    ]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await message.answer(
-        "📊 **Table Manager Bot**\n\n"
-        "Выберите действие из меню ниже:",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-    
-    # Отправляем постоянное меню отдельным сообщением
-    await message.answer(
-        "👇 Или используйте меню внизу экрана:",
-        reply_markup=get_main_keyboard()
-    )
+class MainMenu(StatesGroup):
+    main = State()
 
-@start_router.message(F.text == "ℹ️ Помощь")
-@start_router.message(Command("help"))
-async def help_command(message: Message):
-    """Обработчик команды /help и кнопки помощи"""
-    help_text = """
-📊 **Table Manager Bot - Помощь**
-
-**Основные команды:**
-/start - Главное меню
-/help - Эта справка
-
-**Поддерживаемые форматы:**
-• CSV (.csv)
-• JSON (.json) 
-• Excel (.xlsx, .xls)
-
-**Функционал:**
-• Сохранение таблиц с датой в названии
-• Просмотр списка таблиц
-• Удаление таблиц
-• Скачивание оригинальных файлов
-"""
-    await message.answer(help_text, parse_mode='Markdown', reply_markup=get_main_keyboard())
-
-@start_router.message(F.text == "📥 Сохранить таблицу")
-async def handle_save_table_button(message: Message, state: FSMContext):
-    """Обработчик кнопки сохранения таблицы"""
-    await message.answer(
-        "📥 **Сохранение таблицы**\n\n"
-        "Пожалуйста, загрузите файл таблицы (CSV, JSON, Excel).\n"
-        "Файл будет сохранен с датой в названии.\n\n"
-        "📁 **Поддерживаемые форматы:**\n"
-        "• CSV (.csv)\n"
-        "• JSON (.json)\n"
-        "• Excel (.xlsx, .xls)",
-        parse_mode='Markdown',
-        reply_markup=get_main_keyboard()
-    )
-    await state.set_state(TableStates.waiting_table_file)
-
-@start_router.message(F.text == "📋 Мои таблицы")
-async def handle_list_tables_button(message: Message):
-    """Обработчик кнопки просмотра таблиц"""
-    await handle_list_tables_internal(message)
-
-async def handle_list_tables_internal(message: Message):
-    """Внутренняя функция для просмотра таблиц"""
+@router.message(Command("start"))
+async def start_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id
-    tables = table_manager.get_user_tables(user_id)
+    username = message.from_user.username or "без username"
     
-    if not tables:
+    logger.info(f"🎬 Команда START от пользователя {user_id} (@{username})")
+    
+    try:
+        await state.set_state(MainMenu.main)
+        
+        welcome_text = (
+            "👋 **Table Manager Bot**\n\n"
+            "Я помогу вам работать с таблицами:\n\n"
+            "📥 **Сохранить таблицу** - загрузить новую таблицу\n"
+            "📋 **Мои таблицы** - просмотр и управление таблицами\n"
+            "ℹ️ **Помощь** - справка по использованию бота\n\n"
+            "Выберите действие в меню ниже 👇"
+        )
+        
         await message.answer(
-            "📋 **Мои таблицы**\n\n"
-            "У вас пока нет сохраненных таблиц.\n\n"
-            "💡 Нажмите «📥 Сохранить таблицу», чтобы добавить первую таблицу.",
-            parse_mode='Markdown',
+            welcome_text,
             reply_markup=get_main_keyboard()
         )
-        return
-    
-    message_text = "📋 **Мои таблицы**\n\n"
-    keyboard = []
-    
-    for i, table in enumerate(tables, 1):
-        message_text += f"{i}. **{table.original_name}**\n"
-        message_text += f"   📅 {table.created_at} | 📊 {len(table.columns)} кол. | 📈 {table.rows_count} стр.\n\n"
+        logger.info(f"✅ Приветственное сообщение отправлено пользователю {user_id}")
         
-        keyboard.append([
-            InlineKeyboardButton(text=f"👁️ {table.original_name[:15]}...", callback_data=f"view_{table.id}"),
-            InlineKeyboardButton(text="❌", callback_data=f"confirm_delete_{table.id}")
-        ])
-    
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_main")])
-    
-    await message.answer(
-        message_text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode='Markdown'
-    )
+    except Exception as e:
+        logger.error(f"❌ Ошибка в обработчике start для пользователя {user_id}: {e}", exc_info=True)
+        await message.answer("❌ Произошла ошибка при запуске бота")
 
-# ... остальные обработчики callback_query остаются без изменений ...
-# (handle_save_table, handle_list_tables, handle_view_table, handle_download_table, 
-#  handle_confirm_delete, handle_delete_table, handle_back_main, handle_update_table, handle_export_table)
-
-@start_router.callback_query(F.data == "list_tables")
-async def handle_list_tables(callback: CallbackQuery):
-    """Обработчик просмотра таблиц"""
-    await callback.answer()
-    user_id = callback.from_user.id
-    tables = table_manager.get_user_tables(user_id)
+@router.message(Command("help"))
+@router.message(F.text == "ℹ️ Помощь")
+async def help_handler(message: Message):
+    user_id = message.from_user.id
+    logger.info(f"ℹ️ Команда HELP от пользователя {user_id}")
     
-    if not tables:
-        await callback.message.edit_text(
-            "📋 **Мои таблицы**\n\n"
-            "У вас пока нет сохраненных таблиц.\n\n"
-            "💡 Нажмите «📥 Сохранить таблицу», чтобы добавить первую таблицу.",
-            parse_mode='Markdown'
+    try:
+        help_text = (
+            "ℹ️ **Table Manager Bot - Помощь**\n\n"
+            "**Основные команды:**\n"
+            "/start - Главное меню\n"
+            "/help - Эта справка\n\n"
+            "**Поддерживаемые форматы:**\n"
+            "• CSV (.csv)\n"
+            "• JSON (.json) \n"
+            "• Excel (.xlsx, .xls)\n\n"
+            "**Функционал:**\n"
+            "• Сохранение таблиц с датой в названии\n"
+            "• Просмотр списка таблиц\n"
+            "• Обновление существующих таблиц\n"
+            "• Удаление таблиц\n"
+            "• Скачивание таблиц\n\n"
+            "💡 **Совет:** Используйте кнопки меню для удобной навигации!"
         )
-        return
-    
-    message = "📋 **Мои таблицы**\n\n"
-    keyboard = []
-    
-    for i, table in enumerate(tables, 1):
-        message += f"{i}. **{table.original_name}**\n"
-        message += f"   📅 {table.created_at} | 📊 {len(table.columns)} кол. | 📈 {table.rows_count} стр.\n\n"
         
-        keyboard.append([
-            InlineKeyboardButton(text=f"👁️ {table.original_name[:15]}...", callback_data=f"view_{table.id}"),
-            InlineKeyboardButton(text="❌", callback_data=f"confirm_delete_{table.id}")
-        ])
-    
-    keyboard.append([InlineKeyboardButton(text="🔙 Назад в меню", callback_data="back_main")])
-    
-    await callback.message.edit_text(
-        message,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        parse_mode='Markdown'
-    )
+        await message.answer(help_text)
+        logger.debug(f"✅ Справка отправлена пользователю {user_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка в help_handler для пользователя {user_id}: {e}")
 
-# ... остальные callback обработчики без изменений ...
+@router.message(F.text == "❌ Закрыть меню")
+async def close_menu_handler(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    logger.info(f"❌ Закрытие меню пользователем {user_id}")
+    
+    try:
+        await state.clear()
+        
+        await message.answer(
+            "Меню закрыто. Используйте /start чтобы открыть снова.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        logger.info(f"✅ Меню закрыто для пользователя {user_id}")
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при закрытии меню пользователем {user_id}: {e}")
+
+# УБЕРИТЕ ЭТОТ ОБРАБОТЧИК - он перехватывает все сообщения и мешает работе!
+# @router.message(MainMenu.main)
+# async def main_menu_handler(message: Message):
+#     user_id = message.from_user.id
+#     text = message.text or ""
+    
+#     logger.info(f"🎯 Действие в главном меню от пользователя {user_id}: '{text}'")
+    
+#     try:
+#         if message.text == "📥 Сохранить таблицу":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Сохранить таблицу'")
+#             await message.answer("📥 Переходим к сохранению таблицы...")
+            
+#         elif message.text == "📋 Мои таблицы":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Мои таблицы'")
+#             await message.answer("📋 Переходим к просмотру таблиц...")
+            
+#         elif message.text == "ℹ️ Помощь":
+#             logger.debug(f"Пользователь {user_id} выбрал 'Помощь'")
+#             await message.answer("ℹ️ Открываю справку...")
+            
+#         else:
+#             logger.warning(f"⚠️ Неизвестная команда в меню от пользователя {user_id}: '{text}'")
+#             await message.answer("❌ Неизвестная команда. Используйте кнопки меню.")
+            
+#     except Exception as e:
+#         logger.error(f"❌ Ошибка в main_menu_handler для пользователя {user_id}: {e}", exc_info=True)
+#         await message.answer("❌ Произошла ошибка при обработке команды")

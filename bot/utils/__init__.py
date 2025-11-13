@@ -1,15 +1,4 @@
-from dataclasses import dataclass
-from typing import List
+from .table_analyzer import TableAnalyzer
+from .scenario_applier import ScenarioApplier
 
-@dataclass
-class TableInfo:
-    """Модель для хранения информации о таблице"""
-    id: str
-    user_id: int
-    filename: str
-    original_name: str
-    file_path: str
-    created_at: str
-    columns: List[str]
-    rows_count: int
-    file_size: int
+__all__ = ['TableAnalyzer', 'ScenarioApplier']

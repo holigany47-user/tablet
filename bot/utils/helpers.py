@@ -1,197 +1,345 @@
 import os
-import logging
 import pandas as pd
-import json
-import xml.etree.ElementTree as ET
-from datetime import datetime
-from typing import List, Dict, Any, Tuple
-import tempfile
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+import logging
 
-# Настройка логирования
 logger = logging.getLogger(__name__)
 
-def setup_logging():
-    """Настройка логирования"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler("bot.log"),
-            logging.StreamHandler()
+def get_main_keyboard():
+    """Создает главную клавиатуру меню"""
+    logger.debug("Создание главной клавиатуры меню")
+    try:
+        buttons = [
+            [KeyboardButton(text="📥 Сохранить таблицу"), KeyboardButton(text="📋 Мои таблицы")],
+            [KeyboardButton(text="ℹ️ Помощь")]
         ]
-    )
-
-def get_file_extension(filename):
-    """Получение расширения файла"""
-    return os.path.splitext(filename)[1].lower()
-
-def validate_file_extension(filename, allowed_extensions):
-    """Проверка расширения файла"""
-    extension = get_file_extension(filename)
-    return extension in allowed_extensions
-
-def generate_timestamp():
-    """Генерация временной метки для имен файлов"""
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
-
-def safe_filename(filename):
-    """Создание безопасного имени файла"""
-    safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")
-    return safe_name.strip()
-
-def get_current_date():
-    """Получение текущей даты в формате дд.мм.гггг"""
-    return datetime.now().strftime('%d.%m.%Y')
-
-def read_table_file(file_path: str) -> Tuple[pd.DataFrame, List[str], int]:
-    """Чтение табличного файла в различных форматах"""
-    ext = get_file_extension(file_path)
-    
-    try:
-        if ext in ['.xlsx', '.xls']:
-            df = pd.read_excel(file_path)
-        elif ext == '.csv':
-            df = pd.read_csv(file_path)
-        elif ext == '.json':
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            # Преобразуем JSON в DataFrame
-            if isinstance(data, list):
-                df = pd.DataFrame(data)
-            else:
-                df = pd.DataFrame([data])
-        elif ext == '.xml':
-            tree = ET.parse(file_path)
-            root = tree.getroot()
-            # Простое преобразование XML в DataFrame
-            data = []
-            for child in root:
-                row = {}
-                for subchild in child:
-                    row[subchild.tag] = subchild.text
-                data.append(row)
-            df = pd.DataFrame(data)
-        else:
-            raise ValueError(f"Unsupported file format: {ext}")
-        
-        # Обработка пустого DataFrame
-        if df.empty:
-            logger.warning(f"Файл {file_path} пустой")
-            return pd.DataFrame(), [], 0
-        
-        # Очистка названий колонок от пробелов
-        df.columns = df.columns.astype(str).str.strip()
-        
-        columns = df.columns.tolist()
-        rows_count = len(df)
-        
-        logger.info(f"Успешно прочитан файл {file_path}: {rows_count} строк, {len(columns)} колонок")
-        
-        return df, columns, rows_count
-        
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        logger.debug("✅ Главная клавиатура создана успешно")
+        return keyboard
     except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
-        raise ValueError(f"Ошибка чтения файла {file_path}: {str(e)}")
-
-def save_table_file(df: pd.DataFrame, file_path: str, format: str = 'xlsx'):
-    """Сохранение таблицы в различных форматах"""
-    try:
-        # Создание директории если не существует
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        if format == 'xlsx':
-            df.to_excel(file_path, index=False)
-        elif format == 'csv':
-            df.to_csv(file_path, index=False, encoding='utf-8')
-        elif format == 'json':
-            df.to_json(file_path, orient='records', indent=2, force_ascii=False)
-        elif format == 'xml':
-            # Простое сохранение в XML
-            root = ET.Element('root')
-            for _, row in df.iterrows():
-                item = ET.SubElement(root, 'item')
-                for col, value in row.items():
-                    child = ET.SubElement(item, str(col))
-                    child.text = str(value) if pd.notna(value) else ''
-            
-            tree = ET.ElementTree(root)
-            tree.write(file_path, encoding='utf-8', xml_declaration=True)
-        else:
-            raise ValueError(f"Unsupported format: {format}")
-        
-        logger.info(f"Успешно сохранен файл {file_path} в формате {format}")
-            
-    except Exception as e:
-        logger.error(f"Error saving file {file_path}: {e}")
+        logger.error(f"❌ Ошибка при создании главной клавиатуры: {e}")
         raise
 
-def compare_tables(df1: pd.DataFrame, df2: pd.DataFrame) -> Dict[str, Any]:
+def get_tables_keyboard():
+    """Создает клавиатуру для работы с таблицами"""
+    logger.debug("Создание клавиатуры для таблиц")
+    try:
+        buttons = [
+            [KeyboardButton(text="📤 Скачать таблицу"), KeyboardButton(text="🔄 Обновить таблицу")],
+            [KeyboardButton(text="🗑️ Удалить таблицу"), KeyboardButton(text="🔙 Назад")]
+        ]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        logger.debug("✅ Клавиатура таблиц создана успешно")
+        return keyboard
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании клавиатуры таблиц: {e}")
+        raise
+
+def get_back_keyboard():
+    """Создает клавиатуру с кнопкой Назад"""
+    logger.debug("Создание клавиатуры с кнопкой Назад")
+    try:
+        buttons = [[KeyboardButton(text="🔙 Назад")]]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        return keyboard
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании клавиатуры Назад: {e}")
+        raise
+
+def create_table_action_keyboard(tables_list, action_type="view"):
+    """Создает инлайн-клавиатуру для действий с таблицами"""
+    logger.debug(f"Создание инлайн-клавиатуры для действия: {action_type}")
+    try:
+        keyboard = []
+        
+        for table_info in tables_list:
+            # Получаем короткое имя таблицы для отображения
+            if hasattr(table_info, 'original_name'):
+                display_name = table_info.original_name
+                table_id = table_info.id
+            else:
+                # Если передали просто строку
+                display_name = table_info
+                table_id = table_info
+            
+            # Обрезаем длинные имена для кнопок
+            if len(display_name) > 20:
+                display_name = display_name[:17] + "..."
+            
+            # Создаем безопасный callback_data (только буквы, цифры, подчеркивания)
+            safe_table_id = "".join(c for c in str(table_id) if c.isalnum() or c in ['_', '-'])
+            
+            if action_type == "delete":
+                button_text = f"🗑️ {display_name}"
+                callback_data = f"delete_{safe_table_id}"
+            elif action_type == "update":
+                button_text = f"🔄 {display_name}"
+                callback_data = f"update_{safe_table_id}"
+            elif action_type == "download":
+                button_text = f"📤 {display_name}"
+                callback_data = f"download_{safe_table_id}"
+            else:
+                button_text = f"👀 {display_name}"
+                callback_data = f"view_{safe_table_id}"
+            
+            # Проверяем длину callback_data (Telegram ограничение 64 байта)
+            if len(callback_data.encode('utf-8')) > 64:
+                # Если слишком длинный, используем только ID
+                callback_data = safe_table_id[:64]
+            
+            keyboard.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
+            logger.debug(f"Создана кнопка: {button_text}, callback_data: {callback_data}")
+        
+        # Добавляем кнопку отмены
+        keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")])
+        
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
+    except Exception as e:
+        logger.error(f"❌ Ошибка при создании инлайн-клавиатуры: {e}")
+        return InlineKeyboardMarkup(inline_keyboard=[])
+
+def validate_file_extension(filename: str) -> bool:
+    """Проверяет разрешение файла"""
+    logger.debug(f"🔍 Проверка расширения файла: '{filename}'")
+    try:
+        allowed_extensions = {'.xlsx', '.xls', '.csv', '.json'}
+        result = any(filename.lower().endswith(ext) for ext in allowed_extensions)
+        logger.debug(f"Результат проверки расширения '{filename}': {result}")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка при проверке расширения файла '{filename}': {e}")
+        return False
+
+def format_file_size(size_bytes: int) -> str:
+    """Форматирует размер файла в читаемый вид"""
+    logger.debug(f"📏 Форматирование размера файла: {size_bytes} байт")
+    try:
+        if size_bytes == 0:
+            return "0 B"
+        
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                result = f"{size_bytes:.1f} {unit}"
+                logger.debug(f"Размер отформатирован: {result}")
+                return result
+            size_bytes /= 1024.0
+        
+        result = f"{size_bytes:.1f} TB"
+        logger.debug(f"Размер отформатирован: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"❌ Ошибка при форматировании размера файла: {e}")
+        return "Unknown size"
+
+def read_file(file_path: str):
+    """Читает файл в зависимости от расширения"""
+    logger.info(f"📖 Чтение файла: '{file_path}'")
+    try:
+        if not os.path.exists(file_path):
+            logger.error(f"❌ Файл не существует: '{file_path}'")
+            return None
+            
+        if file_path.endswith('.csv'):
+            logger.debug("Чтение CSV файла")
+            df = pd.read_csv(file_path)
+            logger.info(f"✅ CSV файл прочитан успешно, строк: {len(df)}, колонок: {len(df.columns)}")
+            return df
+        elif file_path.endswith(('.xlsx', '.xls')):
+            logger.debug("Чтение Excel файла")
+            df = pd.read_excel(file_path)
+            logger.info(f"✅ Excel файл прочитан успешно, строк: {len(df)}, колонок: {len(df.columns)}")
+            return df
+        elif file_path.endswith('.json'):
+            logger.debug("Чтение JSON файла")
+            df = pd.read_json(file_path)
+            logger.info(f"✅ JSON файл прочитан успешно, строк: {len(df)}, колонок: {len(df.columns)}")
+            return df
+        else:
+            logger.error(f"❌ Неподдерживаемый формат файла: '{file_path}'")
+            return None
+    except Exception as e:
+        logger.error(f"❌ Ошибка при чтении файла '{file_path}': {e}", exc_info=True)
+        return None
+
+def save_dataframe(df: pd.DataFrame, file_path: str):
+    """Сохраняет DataFrame в файл"""
+    logger.info(f"💾 Сохранение DataFrame в файл: '{file_path}'")
+    logger.debug(f"Размер DataFrame: {len(df)} строк, {len(df.columns)} колонок")
+    
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        if file_path.endswith('.csv'):
+            logger.debug("Сохранение в CSV формат")
+            df.to_csv(file_path, index=False)
+        elif file_path.endswith(('.xlsx', '.xls')):
+            logger.debug("Сохранение в Excel формат")
+            df.to_excel(file_path, index=False)
+        elif file_path.endswith('.json'):
+            logger.debug("Сохранение в JSON формат")
+            df.to_json(file_path, indent=2)
+        else:
+            logger.error(f"❌ Неподдерживаемый формат для сохранения: '{file_path}'")
+            return False
+        
+        file_size = os.path.getsize(file_path)
+        logger.info(f"✅ Файл успешно сохранен: '{file_path}' ({format_file_size(file_size)})")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении файла '{file_path}': {e}", exc_info=True)
+        return False
+
+def get_file_info(file_path: str) -> dict:
+    """Возвращает информацию о файле"""
+    logger.debug(f"🔍 Получение информации о файле: '{file_path}'")
+    try:
+        if os.path.exists(file_path):
+            stat = os.stat(file_path)
+            info = {
+                'size': format_file_size(stat.st_size),
+                'modified': pd.Timestamp(stat.st_mtime, unit='s'),
+                'exists': True
+            }
+            logger.debug(f"Информация о файле получена: {info}")
+            return info
+        logger.warning(f"⚠️ Файл не существует: '{file_path}'")
+        return {'exists': False}
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении информации о файле '{file_path}': {e}")
+        return {'exists': False, 'error': str(e)}
+
+def read_table_file(file_path: str):
+    """Чтение таблицы из файла и возврат DataFrame, колонок и количества строк"""
+    logger.info(f"📖 Чтение таблицы из файла: '{file_path}'")
+    try:
+        df = read_file(file_path)
+        if df is not None:
+            return df, list(df.columns), len(df)
+        return None, [], 0
+    except Exception as e:
+        logger.error(f"❌ Ошибка при чтении таблицы '{file_path}': {e}")
+        return None, [], 0
+
+def save_table_file(df: pd.DataFrame, file_path: str, format: str):
+    """Сохранение таблицы в файл"""
+    logger.info(f"💾 Сохранение таблицы в файл: '{file_path}' формата {format}")
+    try:
+        if format == 'csv':
+            df.to_csv(file_path, index=False)
+        elif format in ['xlsx', 'xls']:
+            df.to_excel(file_path, index=False)
+        elif format == 'json':
+            df.to_json(file_path, indent=2)
+        else:
+            raise ValueError(f"Неподдерживаемый формат: {format}")
+        logger.info(f"✅ Таблица сохранена в {file_path}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сохранении таблицы в {file_path}: {e}")
+        return False
+
+def compare_tables(old_df: pd.DataFrame, new_df: pd.DataFrame) -> dict:
     """Сравнение двух таблиц"""
-    comparison = {
-        'same_structure': False,
-        'columns_diff': {
-            'added': [],
-            'removed': [],
-            'changed': []
-        },
-        'rows_diff': {
-            'added': len(df2) - len(df1) if len(df2) > len(df1) else 0,
-            'removed': len(df1) - len(df2) if len(df1) > len(df2) else 0
-        },
-        'data_diff': {}
-    }
-    
-    # Сравнение столбцов
-    cols1 = set(df1.columns)
-    cols2 = set(df2.columns)
-    
-    comparison['columns_diff']['added'] = list(cols2 - cols1)
-    comparison['columns_diff']['removed'] = list(cols1 - cols2)
-    
-    # Проверка одинаковой структуры
-    comparison['same_structure'] = (
-        len(comparison['columns_diff']['added']) == 0 and
-        len(comparison['columns_diff']['removed']) == 0 and
-        len(df1) == len(df2)
-    )
-    
-    return comparison
+    logger.debug("🔍 Сравнение таблиц")
+    try:
+        old_cols = set(old_df.columns)
+        new_cols = set(new_df.columns)
+        
+        return {
+            'columns_diff': {
+                'added': list(new_cols - old_cols),
+                'removed': list(old_cols - new_cols),
+                'common': list(old_cols & new_cols)
+            },
+            'rows_diff': {
+                'old_rows': len(old_df),
+                'new_rows': len(new_df),
+                'difference': len(new_df) - len(old_df)
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Ошибка при сравнении таблиц: {e}")
+        return {}
 
 def get_file_size(file_path: str) -> int:
     """Получение размера файла в байтах"""
     try:
         return os.path.getsize(file_path)
-    except OSError as e:
-        logger.error(f"Error getting file size for {file_path}: {e}")
+    except:
         return 0
 
-def format_file_size(size_bytes: int) -> str:
-    """Форматирование размера файла в читаемый вид"""
-    if size_bytes == 0:
-        return "0 B"
-    
-    size_names = ["B", "KB", "MB", "GB"]
-    i = 0
-    while size_bytes >= 1024 and i < len(size_names) - 1:
-        size_bytes /= 1024.0
-        i += 1
-        
-    return f"{size_bytes:.1f} {size_names[i]}"
+def generate_timestamp() -> str:
+    """Генерация временной метки"""
+    from datetime import datetime
+    return datetime.now().strftime("%H%M%S")
 
-def validate_dataframe(df: pd.DataFrame) -> Tuple[bool, str]:
-    """Валидация DataFrame на корректность"""
-    if df.empty:
-        return False, "Таблица пустая"
-    
-    if len(df.columns) == 0:
-        return False, "В таблице нет колонок"
-    
-    # Проверка на наличие NaN в названиях колонок
-    if df.columns.isna().any():
-        return False, "Обнаружены пустые названия колонок"
-    
-    # Проверка на дубликаты в названиях колонок
-    if df.columns.duplicated().any():
-        return False, "Обнаружены дублирующиеся названия колонок"
-    
-    return True, "OK"
+# НОВЫЕ ФУНКЦИИ ДЛЯ СЦЕНАРИЕВ ОБНОВЛЕНИЯ
+
+def get_scenario_selection_keyboard():
+    """Клавиатура для выбора сценария обновления"""
+    buttons = [
+        [InlineKeyboardButton(text="📊 Сохранить структуру + добавить строки", callback_data="scenario_1")],
+        [InlineKeyboardButton(text="🔄 Расширить структуру + сохранить строки", callback_data="scenario_2")],
+        [InlineKeyboardButton(text="🧩 Полное объединение (структура + строки)", callback_data="scenario_3")],
+        [InlineKeyboardButton(text="⚡ Умное объединение (авто)", callback_data="scenario_4")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_update")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_conflict_resolution_keyboard():
+    """Клавиатура для выбора правила обработки конфликтов"""
+    buttons = [
+        [InlineKeyboardButton(text="✅ Сохранить имена из СТАРОЙ таблицы", callback_data="conflict_A")],
+        [InlineKeyboardButton(text="🔄 Использовать имена из НОВОЙ таблицы", callback_data="conflict_B")],
+        [InlineKeyboardButton(text="⚡ Объединить (приоритет новых)", callback_data="conflict_C")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_update")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_update_confirmation_keyboard():
+    """Клавиатура для подтверждения обновления"""
+    buttons = [
+        [InlineKeyboardButton(text="✅ ДА, ОБНОВИТЬ", callback_data="confirm_update")],
+        [InlineKeyboardButton(text="🔄 ВЫБРАТЬ ДРУГОЙ СЦЕНАРИЙ", callback_data="change_scenario")],
+        [InlineKeyboardButton(text="❌ ОТМЕНА", callback_data="cancel_update")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_scenario_description(scenario: str) -> str:
+    """Возвращает описание сценария"""
+    descriptions = {
+        '1': "📊 **Сценарий 1: Сохранить структуру + добавить строки**\n\n"
+             "✅ Сохраняет оригинальные столбцы старой таблицы\n"
+             "✅ Добавляет новые строки из новой таблицы\n"
+             "⚠️ Игнорирует новые столбцы из новой таблицы",
+        
+        '2': "🔄 **Сценарий 2: Расширить структуру + сохранить строки**\n\n"
+             "✅ Добавляет новые столбцы из новой таблицы\n"
+             "✅ Сохраняет все строки из старой таблицы\n"
+             "⚠️ Не добавляет новые строки из новой таблицы",
+        
+        '3': "🧩 **Сценарий 3: Полное объединение (структура + строки)**\n\n"
+             "✅ Добавляет новые столбцы из новой таблицы\n"
+             "✅ Добавляет новые строки из новой таблицы\n"
+             "✅ Сохраняет все строки из старой таблицы",
+        
+        '4': "⚡ **Сценарий 4: Умное объединение (авто)**\n\n"
+             "🤖 Автоматический выбор оптимальной стратегии\n"
+             "📊 Анализирует объем изменений и предлагает баланс\n"
+             "👁️ Показывает предварительный результат для подтверждения"
+    }
+    return descriptions.get(scenario, "❌ Неизвестный сценарий")
+
+def get_conflict_rule_description(rule: str) -> str:
+    """Возвращает описание правила конфликтов"""
+    descriptions = {
+        'A': "✅ **Сохранить имена из СТАРОЙ таблицы**\n"
+             "Использует названия столбцов из исходной таблицы",
+        
+        'B': "🔄 **Использовать имена из НОВОЙ таблицы**\n"
+             "Использует названия столбцов из новой таблицы",
+        
+        'C': "⚡ **Объединить (приоритет новых)**\n"
+             "Использует новые названия, сохраняя старые как резерв"
+    }
+    return descriptions.get(rule, "❌ Неизвестное правило")
