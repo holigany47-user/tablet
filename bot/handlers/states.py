@@ -1,8 +1,8 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class TableStates(StatesGroup):
-    waiting_table_file = State()      # для сохранения новых таблиц
-    waiting_update_file = State()     # для обновления существующих таблиц
+    waiting_file = State()              # для сохранения новых таблиц (переименовано из waiting_table_file)
+    waiting_update_file = State()       # для обновления существующих таблиц
 
 class UpdateScenarioStates(StatesGroup):
     """Состояния для процесса выбора сценария обновления"""
