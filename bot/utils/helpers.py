@@ -46,26 +46,49 @@ def get_back_keyboard():
         logger.error(f"❌ Ошибка при создании клавиатуры Назад: {e}")
         raise
 
-def create_table_action_keyboard(tables_list, action_type="delete"):
+def create_table_action_keyboard(tables_list, action_type="view"):
     """Создает инлайн-клавиатуру для действий с таблицами"""
     logger.debug(f"Создание инлайн-клавиатуры для действия: {action_type}")
     try:
         keyboard = []
-        for table_name in tables_list:
-            if action_type == "delete":
-                button_text = f"🗑️ Удалить {table_name}"
-                callback_data = f"delete_{table_name}"
-            elif action_type == "update":
-                button_text = f"🔄 Обновить {table_name}"
-                callback_data = f"update_{table_name}"
-            elif action_type == "download":
-                button_text = f"📤 Скачать {table_name}"
-                callback_data = f"download_{table_name}"
+        
+        for table_info in tables_list:
+            # Получаем короткое имя таблицы для отображения
+            if hasattr(table_info, 'original_name'):
+                display_name = table_info.original_name
+                table_id = table_info.id
             else:
-                button_text = f"👀 Просмотреть {table_name}"
-                callback_data = f"view_{table_name}"
+                # Если передали просто строку
+                display_name = table_info
+                table_id = table_info
+            
+            # Обрезаем длинные имена для кнопок
+            if len(display_name) > 20:
+                display_name = display_name[:17] + "..."
+            
+            # Создаем безопасный callback_data (только буквы, цифры, подчеркивания)
+            safe_table_id = "".join(c for c in str(table_id) if c.isalnum() or c in ['_', '-'])
+            
+            if action_type == "delete":
+                button_text = f"🗑️ {display_name}"
+                callback_data = f"delete_{safe_table_id}"
+            elif action_type == "update":
+                button_text = f"🔄 {display_name}"
+                callback_data = f"update_{safe_table_id}"
+            elif action_type == "download":
+                button_text = f"📤 {display_name}"
+                callback_data = f"download_{safe_table_id}"
+            else:
+                button_text = f"👀 {display_name}"
+                callback_data = f"view_{safe_table_id}"
+            
+            # Проверяем длину callback_data (Telegram ограничение 64 байта)
+            if len(callback_data.encode('utf-8')) > 64:
+                # Если слишком длинный, используем только ID
+                callback_data = safe_table_id[:64]
             
             keyboard.append([InlineKeyboardButton(text=button_text, callback_data=callback_data)])
+            logger.debug(f"Создана кнопка: {button_text}, callback_data: {callback_data}")
         
         # Добавляем кнопку отмены
         keyboard.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")])
