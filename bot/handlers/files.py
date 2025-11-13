@@ -323,17 +323,28 @@ async def process_download_callback(callback: CallbackQuery):
         
         # Проверяем существование файла
         if os.path.exists(table_info.file_path):
-            # Отправляем файл пользователю
+            # Импортируем BufferedInputFile
+            from aiogram.types import BufferedInputFile
+            
+            # Читаем файл в память и создаем BufferedInputFile
             with open(table_info.file_path, 'rb') as file:
-                await callback.message.answer_document(
-                    document=file,
-                    caption=(
-                        f"📤 **Таблица: {table_info.original_name}**\n\n"
-                        f"📊 Столбцы: {len(table_info.columns)}\n"
-                        f"📈 Строки: {table_info.rows_count}\n"
-                        f"📅 Дата сохранения: {table_info.created_at}"
-                    )
+                file_data = file.read()
+            
+            input_file = BufferedInputFile(
+                file=file_data,
+                filename=table_info.original_name
+            )
+            
+            # Отправляем файл пользователю
+            await callback.message.answer_document(
+                document=input_file,
+                caption=(
+                    f"📤 **Таблица: {table_info.original_name}**\n\n"
+                    f"📊 Столбцы: {len(table_info.columns)}\n"
+                    f"📈 Строки: {table_info.rows_count}\n"
+                    f"📅 Дата сохранения: {table_info.created_at}"
                 )
+            )
             logger.info(f"✅ Таблица {table_info.original_name} отправлена пользователю {user_id}")
             
             # Редактируем исходное сообщение
