@@ -26,9 +26,8 @@ class ScenarioApplier:
             
             if common_columns:
                 # Находим новые строки (которые отсутствуют в старой таблице)
-                # Используем все общие столбцы для сравнения
-                old_combined = old_df[common_columns].astype(str).sum(axis=1)
-                new_combined = new_df[common_columns].astype(str).sum(axis=1)
+                old_combined = old_df[common_columns].fillna('').astype(str).sum(axis=1)
+                new_combined = new_df[common_columns].fillna('').astype(str).sum(axis=1)
                 
                 old_hashes = set(old_combined)
                 new_hashes = set(new_combined)
@@ -38,18 +37,33 @@ class ScenarioApplier:
                 
                 if new_rows_mask.any():
                     # Берем только общие столбцы из новых строк
-                    new_rows_df = new_df.loc[new_rows_mask, common_columns]
+                    new_rows_df = new_df.loc[new_rows_mask, common_columns].copy()
                     
-                    # Применяем правило конфликта для имен
+                    # Применяем правило конфликта для имен в СУЩЕСТВУЮЩИХ строках
                     if 'Имя' in common_columns and conflict_rule != 'A':
-                        # Для правила B и C используем имена из новой таблицы
-                        if conflict_rule == 'B':
-                            # Полностью заменяем имена на новые
-                            pass  # Уже берем из новой таблицы
-                        elif conflict_rule == 'C':
-                            # Приоритет новым именам, но сохраняем старые если новых нет
-                            # В данном случае просто берем новые имена
-                            pass  # Уже берем из новой таблицы
+                        # Для существующих строк, которые есть в обеих таблицах
+                        common_rows_hashes = old_hashes & new_hashes
+                        common_rows_mask = new_combined.isin(common_rows_hashes)
+                        
+                        if common_rows_mask.any():
+                            common_new_rows = new_df.loc[common_rows_mask]
+                            
+                            # Создаем маппинг id -> имя из новой таблицы
+                            name_mapping = {}
+                            if 'id' in common_columns:
+                                for _, row in common_new_rows.iterrows():
+                                    name_mapping[row['id']] = row['Имя']
+                            
+                            # Обновляем имена в существующих строках result_df
+                            for idx in result_df.index:
+                                row_id = result_df.at[idx, 'id']
+                                if row_id in name_mapping:
+                                    if conflict_rule == 'B':
+                                        # Полностью заменяем на новые имена
+                                        result_df.at[idx, 'Имя'] = name_mapping[row_id]
+                                    elif conflict_rule == 'C':
+                                        # Приоритет новым именам
+                                        result_df.at[idx, 'Имя'] = name_mapping[row_id]
                     
                     result_df = pd.concat([result_df, new_rows_df], ignore_index=True)
                     message = f"✅ Добавлено {len(new_rows_df)} новых строк"
@@ -85,36 +99,36 @@ class ScenarioApplier:
             for col in new_columns:
                 result_df[col] = None  # Инициализируем новые столбцы пустыми значениями
             
-            # Заполняем новые столбцы данными из новой таблицы для существующих строк
-            # Используем merge для сопоставления по общим столбцам
+            # Определяем общие столбцы
             common_columns = list(set(old_df.columns) & set(new_df.columns))
             
-            if common_columns:
-                # Объединяем старую таблицу с новой по общим столбцам
-                merged = pd.merge(result_df, new_df, on=common_columns, how='left', suffixes=('', '_new'))
+            if common_columns and 'id' in common_columns:
+                # Создаем словарь для быстрого доступа к данным новой таблицы по id
+                new_data_by_id = {}
+                for _, row in new_df.iterrows():
+                    row_id = row['id']
+                    new_data_by_id[row_id] = row
                 
-                # Заполняем новые столбцы данными из объединенной таблицы
-                for col in new_columns:
-                    if f"{col}_new" in merged.columns:
-                        result_df[col] = merged[f"{col}_new"]
-                    elif col in merged.columns:
-                        result_df[col] = merged[col]
-                
-                # Применяем правило конфликта для имен
-                if 'Имя' in common_columns and conflict_rule != 'A':
-                    if conflict_rule in ['B', 'C']:
-                        # Берем имена из новой таблицы
-                        for idx in result_df.index:
-                            # Находим соответствующую строку в новой таблице
-                            match_mask = True
-                            for common_col in common_columns:
-                                if common_col != 'Имя':
-                                    old_val = result_df.at[idx, common_col]
-                                    # Ищем совпадение в новой таблице
-                                    new_match = new_df[new_df[common_col] == old_val]
-                                    if not new_match.empty and 'Имя' in new_match.columns:
-                                        result_df.at[idx, 'Имя'] = new_match.iloc[0]['Имя']
-                                        break
+                # Заполняем данные из новой таблицы
+                for idx in result_df.index:
+                    row_id = result_df.at[idx, 'id']
+                    if row_id in new_data_by_id:
+                        new_row = new_data_by_id[row_id]
+                        
+                        # Заполняем новые столбцы
+                        for col in new_columns:
+                            if col in new_row and pd.notna(new_row[col]):
+                                result_df.at[idx, col] = new_row[col]
+                        
+                        # Применяем правило конфликта для имен
+                        if 'Имя' in common_columns and conflict_rule != 'A':
+                            if 'Имя' in new_row and pd.notna(new_row['Имя']):
+                                if conflict_rule == 'B':
+                                    # Полностью заменяем на новые имена
+                                    result_df.at[idx, 'Имя'] = new_row['Имя']
+                                elif conflict_rule == 'C':
+                                    # Приоритет новым именам
+                                    result_df.at[idx, 'Имя'] = new_row['Имя']
             
             message = f"✅ Добавлено {len(new_columns)} новых столбцов"
             logger.info(f"✅ Сценарий 2 применен: {message}")
@@ -136,66 +150,66 @@ class ScenarioApplier:
         logger.info("🔄 Применение сценария 3: Полное объединение")
         
         try:
-            # Начинаем со старой таблицы
-            result_df = old_df.copy()
+            # Создаем полный набор столбцов
+            all_columns = list(set(old_df.columns) | set(new_df.columns))
+            result_df = pd.DataFrame(columns=all_columns)
             
-            # Добавляем новые столбцы из новой таблицы
+            # Сначала добавляем все данные из старой таблицы
+            for col in old_df.columns:
+                result_df[col] = old_df[col]
+            
+            # Добавляем новые столбцы и заполняем их
             new_columns = list(set(new_df.columns) - set(old_df.columns))
             for col in new_columns:
-                result_df[col] = None
+                if col not in result_df.columns:
+                    result_df[col] = None
             
-            # Определяем общие столбцы
-            common_columns = list(set(old_df.columns) & set(new_df.columns))
+            # Создаем словарь для быстрого доступа к данным новой таблицы по id
+            new_data_by_id = {}
+            if 'id' in new_df.columns:
+                for _, row in new_df.iterrows():
+                    row_id = row['id']
+                    new_data_by_id[row_id] = row
+            
+            # Обновляем данные из новой таблицы
+            for idx in result_df.index:
+                row_id = result_df.at[idx, 'id']
+                if row_id in new_data_by_id:
+                    new_row = new_data_by_id[row_id]
+                    
+                    # Заполняем все столбцы из новой таблицы
+                    for col in new_df.columns:
+                        if col in result_df.columns and pd.notna(new_row[col]):
+                            # Применяем правило конфликта для имен
+                            if col == 'Имя' and conflict_rule != 'A':
+                                if conflict_rule == 'B':
+                                    # Полностью заменяем на новые имена
+                                    result_df.at[idx, col] = new_row[col]
+                                elif conflict_rule == 'C':
+                                    # Приоритет новым именам
+                                    result_df.at[idx, col] = new_row[col]
+                            else:
+                                # Для остальных столбцов просто заполняем
+                                result_df.at[idx, col] = new_row[col]
             
             # Добавляем новые строки из новой таблицы
-            if common_columns:
-                # Находим строки в новой таблице, которых нет в старой
-                old_combined = old_df[common_columns].astype(str).sum(axis=1)
-                new_combined = new_df[common_columns].astype(str).sum(axis=1)
-                
-                old_hashes = set(old_combined)
-                new_hashes = set(new_combined)
-                
-                new_rows_hashes = new_hashes - old_hashes
-                new_rows_mask = new_combined.isin(new_rows_hashes)
-                
-                if new_rows_mask.any():
-                    new_rows_df = new_df.loc[new_rows_mask]
-                    
-                    # Для новых строк добавляем недостающие столбцы
-                    for col in old_df.columns:
-                        if col not in new_rows_df.columns:
-                            new_rows_df[col] = None
-                    
-                    result_df = pd.concat([result_df, new_rows_df], ignore_index=True)
+            existing_ids = set(result_df['id'].tolist())
+            new_rows_to_add = []
             
-            # Заполняем данные из новой таблицы для всех строк
-            if common_columns:
-                # Создаем временный объединенный DataFrame
-                temp_merged = pd.merge(result_df, new_df, on=common_columns, how='left', suffixes=('', '_new'))
-                
-                # Заполняем новые столбцы данными из новой таблицы
-                for col in new_columns:
-                    if f"{col}_new" in temp_merged.columns:
-                        result_df[col] = temp_merged[f"{col}_new"]
-                    elif col in temp_merged.columns:
-                        result_df[col] = temp_merged[col]
-                
-                # Применяем правило конфликта для имен
-                if 'Имя' in common_columns and conflict_rule != 'A':
-                    if conflict_rule in ['B', 'C']:
-                        # Создаем маппинг из новой таблицы
-                        name_mapping = {}
-                        for idx, row in new_df.iterrows():
-                            key = tuple(str(row[col]) for col in common_columns if col != 'Имя')
-                            if key and 'Имя' in row:
-                                name_mapping[key] = row['Имя']
-                        
-                        # Обновляем имена в result_df
-                        for idx in result_df.index:
-                            key = tuple(str(result_df.at[idx, col]) for col in common_columns if col != 'Имя')
-                            if key in name_mapping:
-                                result_df.at[idx, 'Имя'] = name_mapping[key]
+            for _, new_row in new_df.iterrows():
+                if new_row['id'] not in existing_ids:
+                    new_row_data = {}
+                    # Заполняем все столбцы
+                    for col in all_columns:
+                        if col in new_row and pd.notna(new_row[col]):
+                            new_row_data[col] = new_row[col]
+                        else:
+                            new_row_data[col] = None
+                    new_rows_to_add.append(new_row_data)
+            
+            if new_rows_to_add:
+                new_rows_df = pd.DataFrame(new_rows_to_add)
+                result_df = pd.concat([result_df, new_rows_df], ignore_index=True)
             
             message = f"✅ Полное объединение: {len(result_df)} строк, {len(result_df.columns)} столбцов"
             logger.info(f"✅ Сценарий 3 применен: {message}")
@@ -225,8 +239,8 @@ class ScenarioApplier:
             # Анализируем строки
             common_columns = list(old_cols & new_cols)
             if common_columns:
-                old_combined = old_df[common_columns].astype(str).sum(axis=1)
-                new_combined = new_df[common_columns].astype(str).sum(axis=1)
+                old_combined = old_df[common_columns].fillna('').astype(str).sum(axis=1)
+                new_combined = new_df[common_columns].fillna('').astype(str).sum(axis=1)
                 
                 old_hashes = set(old_combined)
                 new_hashes = set(new_combined)
@@ -236,7 +250,7 @@ class ScenarioApplier:
                 added_rows = len(new_df)
             
             # Эвристика для выбора сценария
-            if added_cols > 2 and added_rows > 2:
+            if added_cols >= 2 and added_rows >= 2:
                 # Много новых столбцов и строк - полное объединение
                 result_df, message = ScenarioApplier.apply_scenario_3(old_df, new_df, conflict_rule)
                 message = f"⚡ Умное объединение (полное): {message}"
