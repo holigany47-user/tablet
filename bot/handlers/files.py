@@ -5,17 +5,17 @@ from aiogram.types import Message, ReplyKeyboardRemove, CallbackQuery
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
 
 from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, format_file_size
 from bot.utils.helpers import get_scenario_selection_keyboard, get_conflict_resolution_keyboard, get_update_confirmation_keyboard, get_scenario_description, get_conflict_rule_description
+from bot.utils.helpers import get_key_column_keyboard, get_key_column_description, get_table_preview_text, generate_timestamp
 from bot.utils.table_analyzer import TableAnalyzer
 from bot.utils.scenario_applier import ScenarioApplier
 from bot.services.local_storage import LocalStorage
 from bot.services.table_manager import AdvancedTableManager
 from bot.handlers.states import TableStates, UpdateScenarioStates
-from datetime import datetime
 from bot.models import TableInfo
-from bot.utils.helpers import generate_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +252,42 @@ async def process_delete_callback(callback: CallbackQuery):
             await callback.message.edit_text("❌ Таблица не найдена.")
             return
         
+        # Создаем клавиатуру подтверждения
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        confirm_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ ДА, УДАЛИТЬ", callback_data=f"confirm_delete_{table_id}"),
+                InlineKeyboardButton(text="❌ ОТМЕНА", callback_data="cancel_delete")
+            ]
+        ])
+        
+        await callback.message.edit_text(
+            f"🗑️ **Подтверждение удаления**\n\n"
+            f"📁 **Таблица:** {table_info.original_name}\n"
+            f"📅 **Дата:** {table_info.created_at}\n"
+            f"📊 **Столбцы:** {len(table_info.columns)}\n"
+            f"📈 **Строки:** {table_info.rows_count}\n\n"
+            f"⚠️ **Это действие нельзя отменить!**\n"
+            f"Вы уверены, что хотите удалить эту таблицу?",
+            reply_markup=confirm_keyboard
+        )
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении таблицы {table_id} пользователем {user_id}: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при удалении таблицы")
+
+@router.callback_query(F.data.startswith("confirm_delete_"))
+async def process_confirm_delete(callback: CallbackQuery):
+    """Обработчик подтверждения удаления"""
+    user_id = callback.from_user.id
+    table_id = callback.data.replace("confirm_delete_", "")
+    
+    try:
+        table_info = table_manager.get_table(table_id)
+        if not table_info:
+            await callback.message.edit_text("❌ Таблица не найдена.")
+            return
+        
         # Удаляем таблицу
         success = table_manager.delete_table(table_id)
         
@@ -273,6 +309,15 @@ async def process_delete_callback(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении таблицы {table_id} пользователем {user_id}: {e}")
         await callback.message.edit_text("❌ Произошла ошибка при удалении таблицы")
+
+@router.callback_query(F.data == "cancel_delete")
+async def process_cancel_delete(callback: CallbackQuery):
+    """Обработчик отмены удаления"""
+    await callback.message.edit_text("❌ Удаление отменено.")
+    await callback.message.answer(
+        "Выберите следующее действие:",
+        reply_markup=get_tables_keyboard()
+    )
 
 # СТАРЫЙ ОБРАБОТЧИК ОБНОВЛЕНИЯ - ЗАМЕНЯЕМ НА НОВЫЙ
 @router.callback_query(F.data.startswith("update_"))
@@ -325,46 +370,57 @@ async def process_download_callback(callback: CallbackQuery):
             return
         
         # Проверяем существование файла
-        if os.path.exists(table_info.file_path):
-            # Импортируем BufferedInputFile
-            from aiogram.types import BufferedInputFile
-            
-            # Читаем файл в память и создаем BufferedInputFile
-            with open(table_info.file_path, 'rb') as file:
-                file_data = file.read()
-            
-            input_file = BufferedInputFile(
-                file=file_data,
-                filename=table_info.original_name
-            )
-            
-            # Отправляем файл пользователю
-            await callback.message.answer_document(
-                document=input_file,
-                caption=(
-                    f"📤 **Таблица: {table_info.original_name}**\n\n"
-                    f"📊 Столбцы: {len(table_info.columns)}\n"
-                    f"📈 Строки: {table_info.rows_count}\n"
-                    f"📅 Дата сохранения: {table_info.created_at}"
-                )
-            )
-            logger.info(f"✅ Таблица {table_info.original_name} отправлена пользователю {user_id}")
-            
-            # Редактируем исходное сообщение
-            await callback.message.edit_text(
-                f"✅ **Таблица отправлена:** {table_info.original_name}\n\n"
-                f"Файл успешно загружен и отправлен."
-            )
-        else:
+        if not os.path.exists(table_info.file_path):
             await callback.message.edit_text(
                 f"❌ **Файл не найден**\n\n"
                 f"Файл таблицы {table_info.original_name} не существует."
             )
             logger.error(f"❌ Файл таблицы не существует: {table_info.file_path}")
+            return
+        
+        # Показываем превью перед скачиванием
+        preview_df = table_manager.get_table_preview(table_id, 3)
+        if preview_df is not None:
+            preview_text = get_table_preview_text(preview_df, table_info.original_name, 3)
+            await callback.message.answer(preview_text)
+        
+        # Импортируем BufferedInputFile
+        from aiogram.types import BufferedInputFile
+        
+        # Читаем файл в память и создаем BufferedInputFile
+        with open(table_info.file_path, 'rb') as file:
+            file_data = file.read()
+        
+        input_file = BufferedInputFile(
+            file=file_data,
+            filename=table_info.original_name
+        )
+        
+        # Отправляем файл пользователю
+        await callback.message.answer_document(
+            document=input_file,
+            caption=(
+                f"📤 **Таблица: {table_info.original_name}**\n\n"
+                f"📊 Столбцы: {len(table_info.columns)}\n"
+                f"📈 Строки: {table_info.rows_count}\n"
+                f"📅 Дата сохранения: {table_info.created_at}\n"
+                f"💾 Размер: {format_file_size(table_info.file_size)}"
+            )
+        )
+        logger.info(f"✅ Таблица {table_info.original_name} отправлена пользователю {user_id}")
+        
+        # Редактируем исходное сообщение
+        await callback.message.edit_text(
+            f"✅ **Таблица отправлена:** {table_info.original_name}\n\n"
+            f"Файл успешно загружен и отправлен."
+        )
             
     except Exception as e:
         logger.error(f"❌ Ошибка при скачивании таблицы {table_id} пользователем {user_id}: {e}")
-        await callback.message.edit_text("❌ Произошла ошибка при подготовке таблицы к скачиванию")
+        await callback.message.edit_text(
+            "❌ Произошла ошибка при подготовке таблицы к скачиванию.\n"
+            "Попробуйте еще раз или обратитесь к администратору."
+        )
 
 @router.callback_query(F.data == "cancel_action")
 async def process_cancel_callback(callback: CallbackQuery):
@@ -481,7 +537,7 @@ async def process_update_file_analysis(message: Message, state: FSMContext):
 
 @router.callback_query(UpdateScenarioStates.waiting_scenario_selection, F.data.startswith("scenario_"))
 async def process_scenario_selection(callback: CallbackQuery, state: FSMContext):
-    """Обработчик выбора сценария обновления"""
+    """Обработчик выбора сценария обновления - теперь предлагаем выбрать ключевой столбец"""
     user_id = callback.from_user.id
     scenario = callback.data.replace("scenario_", "")
     
@@ -491,25 +547,77 @@ async def process_scenario_selection(callback: CallbackQuery, state: FSMContext)
         # Сохраняем выбранный сценарий
         await state.update_data(selected_scenario=scenario)
         
-        # Показываем описание сценария
+        # Получаем данные таблиц
+        state_data = await state.get_data()
+        table_id = state_data.get('table_to_update')
+        temp_path = state_data.get('temp_file_path')
+        
+        table_info = table_manager.get_table(table_id)
+        old_df, _, _ = table_manager.read_table_file(table_info.file_path)
+        new_df, _, _ = table_manager.read_table_file(temp_path)
+        
+        # Находим общие столбцы
+        common_columns = list(set(old_df.columns) & set(new_df.columns))
+        
+        if not common_columns:
+            await callback.message.edit_text(
+                "❌ **Нет общих столбцов**\n\n"
+                "Таблицы не имеют общих столбцов для объединения.\n"
+                "Попробуйте загрузить таблицы с одинаковой структурой."
+            )
+            return
+        
+        # Предлагаем выбрать ключевой столбец
+        scenario_desc = get_scenario_description(scenario)
+        
+        await callback.message.edit_text(
+            f"{scenario_desc}\n\n"
+            f"📋 **Общие столбцы:** {len(common_columns)}\n"
+            f"🔍 Выберите ключевой столбец для объединения:",
+            reply_markup=get_key_column_keyboard(common_columns, "common")
+        )
+        
+        await state.set_state(UpdateScenarioStates.waiting_key_column_selection)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при выборе сценария {scenario}: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при выборе сценария")
+
+@router.callback_query(UpdateScenarioStates.waiting_key_column_selection, F.data.startswith("key_"))
+async def process_key_column_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора ключевого столбца"""
+    user_id = callback.from_user.id
+    key_option = callback.data.replace("key_", "")
+    
+    logger.info(f"🔑 Пользователь {user_id} выбрал ключ: {key_option}")
+    
+    try:
+        await state.update_data(selected_key=key_option)
+        
+        # Получаем описание выбранного варианта
+        key_desc = get_key_column_description(key_option)
+        
+        state_data = await state.get_data()
+        scenario = state_data.get('selected_scenario')
         scenario_desc = get_scenario_description(scenario)
         
         # Для сценария 4 (умное объединение) пропускаем выбор правила конфликтов
         if scenario == '4':
-            await state.update_data(conflict_rule='A')  # по умолчанию
+            await state.update_data(conflict_rule='A')
             await show_preview_and_confirm(callback, state)
         else:
             # Для остальных сценариев предлагаем выбрать правило конфликтов
             await callback.message.edit_text(
                 f"{scenario_desc}\n\n"
+                f"{key_desc}\n\n"
                 "⚡ **ВЫБЕРИТЕ ПРАВИЛО ДЛЯ КОНФЛИКТУЮЩИХ ИМЕН:**",
                 reply_markup=get_conflict_resolution_keyboard()
             )
             await state.set_state(UpdateScenarioStates.waiting_conflict_resolution)
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при выборе сценария {scenario}: {e}")
-        await callback.message.edit_text("❌ Произошла ошибка при выборе сценария")
+        logger.error(f"❌ Ошибка при выборе ключевого столбца: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при выборе ключевого столбца")
 
 @router.callback_query(UpdateScenarioStates.waiting_conflict_resolution, F.data.startswith("conflict_"))
 async def process_conflict_resolution(callback: CallbackQuery, state: FSMContext):
@@ -534,10 +642,10 @@ async def show_preview_and_confirm(callback: CallbackQuery, state: FSMContext):
     try:
         state_data = await state.get_data()
         scenario = state_data.get('selected_scenario')
+        key_option = state_data.get('selected_key')
         conflict_rule = state_data.get('conflict_rule', 'A')
         table_id = state_data.get('table_to_update')
         temp_path = state_data.get('temp_file_path')
-        analysis = state_data.get('analysis', {})
         
         # Получаем таблицы
         table_info = table_manager.get_table(table_id)
@@ -545,30 +653,24 @@ async def show_preview_and_confirm(callback: CallbackQuery, state: FSMContext):
         new_df, _, _ = table_manager.read_table_file(temp_path)
         
         # Применяем сценарий для предварительного просмотра
-        preview_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, conflict_rule)
+        preview_df, message = scenario_applier.apply_scenario(
+            scenario, old_df, new_df, key_option, conflict_rule
+        )
         
         # Формируем сообщение с предварительным результатом
-        scenario_names = {
-            '1': 'Сохранить структуру + добавить строки',
-            '2': 'Расширить структуру + сохранить строки', 
-            '3': 'Полное объединение',
-            '4': 'Умное объединение'
+        key_names = {
+            "all_columns": "Все общие столбцы",
+            "no_key": "Без ключа",
         }
         
-        conflict_names = {
-            'A': 'Сохранить имена из СТАРОЙ таблицы',
-            'B': 'Использовать имена из НОВОЙ таблицы',
-            'C': 'Объединить (приоритет новых)'
-        }
+        key_display = key_names.get(key_option, key_option)
         
         preview_text = (
             f"✅ **ПРЕДВАРИТЕЛЬНЫЙ РЕЗУЛЬТАТ**\n\n"
-            f"📋 **Сценарий:** {scenario_names.get(scenario, 'Неизвестный')}\n"
-            f"⚡ **Правило конфликтов:** {conflict_names.get(conflict_rule, 'Неизвестное')}\n"
+            f"📋 **Сценарий:** {get_scenario_description(scenario).split('**')[1]}\n"
+            f"🔑 **Ключ объединения:** {key_display}\n"
+            f"⚡ **Правило конфликтов:** {get_conflict_rule_description(conflict_rule).split('**')[1]}\n"
             f"📊 **Итоговые размеры:** {len(preview_df)} строк, {len(preview_df.columns)} столбцов\n\n"
-            f"📈 **Изменения:**\n"
-            f"• Столбцов: +{len(preview_df.columns) - analysis.get('columns', {}).get('total_old', 0)}\n"
-            f"• Строк: +{len(preview_df) - analysis.get('rows', {}).get('total_old', 0)}\n\n"
             f"💡 {message}\n\n"
             f"**Подтверждаете обновление?**"
         )
@@ -595,6 +697,7 @@ async def process_update_confirmation(callback: CallbackQuery, state: FSMContext
         table_id = state_data.get('table_to_update')
         temp_path = state_data.get('temp_file_path')
         scenario = state_data.get('selected_scenario')
+        key_option = state_data.get('selected_key')
         conflict_rule = state_data.get('conflict_rule', 'A')
         
         # Получаем таблицы
@@ -603,7 +706,7 @@ async def process_update_confirmation(callback: CallbackQuery, state: FSMContext
         new_df, _, _ = table_manager.read_table_file(temp_path)
         
         # Применяем сценарий
-        result_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, conflict_rule)
+        result_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, key_option, conflict_rule)
         
         # ВМЕСТО ПЕРЕЗАПИСИ СТАРОГО ФАЙЛА - СОЗДАЕМ НОВУЮ ТАБЛИЦУ
         # Генерируем новое имя файла с пометкой "обновлено"
@@ -660,6 +763,7 @@ async def process_update_confirmation(callback: CallbackQuery, state: FSMContext
         await state.clear()
 
 @router.callback_query(UpdateScenarioStates.waiting_scenario_selection, F.data == "cancel_update")
+@router.callback_query(UpdateScenarioStates.waiting_key_column_selection, F.data == "cancel_update")
 @router.callback_query(UpdateScenarioStates.waiting_conflict_resolution, F.data == "cancel_update")
 @router.callback_query(UpdateScenarioStates.waiting_update_confirmation, F.data == "cancel_update")
 async def process_cancel_update(callback: CallbackQuery, state: FSMContext):
