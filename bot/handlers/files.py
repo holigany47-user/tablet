@@ -13,6 +13,9 @@ from bot.utils.scenario_applier import ScenarioApplier
 from bot.services.local_storage import LocalStorage
 from bot.services.table_manager import AdvancedTableManager
 from bot.handlers.states import TableStates, UpdateScenarioStates
+from datetime import datetime
+from bot.models import TableInfo
+from bot.utils.helpers import generate_timestamp
 
 logger = logging.getLogger(__name__)
 
