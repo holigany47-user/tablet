@@ -305,6 +305,24 @@ def get_update_confirmation_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def get_key_column_keyboard(columns: list, table_type: str = "common"):
+    """Клавиатура для выбора ключевого столбца"""
+    buttons = []
+    
+    # Кнопки для общих столбцов
+    for col in columns:
+        buttons.append([InlineKeyboardButton(text=f"🔑 {col}", callback_data=f"key_{col}")])
+    
+    # Дополнительные опции
+    if table_type == "common":
+        buttons.extend([
+            [InlineKeyboardButton(text="📋 Использовать все столбцы", callback_data="key_all_columns")],
+            [InlineKeyboardButton(text="🚫 Без ключа (добавить все)", callback_data="key_no_key")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_update")]
+        ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def get_scenario_description(scenario: str) -> str:
     """Возвращает описание сценария"""
     descriptions = {
@@ -343,23 +361,6 @@ def get_conflict_rule_description(rule: str) -> str:
              "Использует новые названия, сохраняя старые как резерв"
     }
     return descriptions.get(rule, "❌ Неизвестное правило")
-def get_key_column_keyboard(columns: List[str], table_type: str = "common"):
-    """Клавиатура для выбора ключевого столбца"""
-    buttons = []
-    
-    # Кнопки для общих столбцов
-    for col in columns:
-        buttons.append([InlineKeyboardButton(text=f"🔑 {col}", callback_data=f"key_{col}")])
-    
-    # Дополнительные опции
-    if table_type == "common":
-        buttons.extend([
-            [InlineKeyboardButton(text="📋 Использовать все столбцы", callback_data="key_all_columns")],
-            [InlineKeyboardButton(text="🚫 Без ключа (добавить все)", callback_data="key_no_key")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_update")]
-        ])
-    
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_key_column_description(key_option: str) -> str:
     """Описание вариантов выбора ключевого столбца"""
@@ -368,3 +369,35 @@ def get_key_column_description(key_option: str) -> str:
         "no_key": "🚫 **Без ключа (добавить все)**\nДобавляет все строки из новой таблицы (возможны дубликаты)",
     }
     return descriptions.get(key_option, f"🔑 **Ключевой столбец:** {key_option}")
+
+def get_table_preview_text(df: pd.DataFrame, table_name: str, max_rows: int = 5) -> str:
+    """Генерирует текстовое превью таблицы"""
+    try:
+        preview_text = [
+            f"📊 **Превью таблицы: {table_name}**",
+            f"📈 Строк: {len(df)}, 📋 Столбцов: {len(df.columns)}",
+            "",
+            "```",
+        ]
+        
+        # Берем первые несколько строк
+        preview_df = df.head(max_rows)
+        
+        # Формируем заголовок
+        headers = "\t".join(str(col) for col in preview_df.columns)
+        preview_text.append(headers)
+        
+        # Формируем строки данных
+        for _, row in preview_df.iterrows():
+            row_data = "\t".join(str(cell) if pd.notna(cell) else "" for cell in row)
+            preview_text.append(row_data)
+        
+        preview_text.append("```")
+        
+        if len(df) > max_rows:
+            preview_text.append(f"*... и еще {len(df) - max_rows} строк*")
+        
+        return "\n".join(preview_text)
+    except Exception as e:
+        logger.error(f"Ошибка при создании превью: {e}")
+        return f"❌ Не удалось создать превью таблицы"
