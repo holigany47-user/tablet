@@ -7,21 +7,22 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 
 from bot.utils.helpers import get_tables_keyboard, get_main_keyboard, get_back_keyboard, create_table_action_keyboard, validate_file_extension, format_file_size
+from bot.utils.helpers import get_scenario_selection_keyboard, get_conflict_resolution_keyboard, get_update_confirmation_keyboard, get_scenario_description, get_conflict_rule_description
+from bot.utils.table_analyzer import TableAnalyzer
+from bot.utils.scenario_applier import ScenarioApplier
 from bot.services.local_storage import LocalStorage
 from bot.services.table_manager import AdvancedTableManager
+from bot.handlers.states import TableStates, UpdateScenarioStates
 
 logger = logging.getLogger(__name__)
 
 router = Router()
 storage_service = LocalStorage()
 table_manager = AdvancedTableManager()
+table_analyzer = TableAnalyzer()
+scenario_applier = ScenarioApplier()
 
-class FileStates(StatesGroup):
-    waiting_file = State()
-    waiting_file_action = State()
-    waiting_table_selection = State()
-    waiting_update_file = State()
-    table_to_update = State()
+# СУЩЕСТВУЮЩИЕ ОБРАБОТЧИКИ (без изменений)
 
 @router.message(F.text == "📥 Сохранить таблицу")
 async def save_table_handler(message: Message, state: FSMContext):
@@ -30,7 +31,7 @@ async def save_table_handler(message: Message, state: FSMContext):
     logger.info(f"📥 Пользователь {user_id} начал сохранение таблицы")
     
     try:
-        await state.set_state(FileStates.waiting_file)
+        await state.set_state(TableStates.waiting_file)
         
         await message.answer(
             "📥 **Сохранение таблицы**\n\n"
@@ -47,7 +48,7 @@ async def save_table_handler(message: Message, state: FSMContext):
         logger.error(f"❌ Ошибка в save_table_handler для пользователя {user_id}: {e}")
         await message.answer("❌ Ошибка при подготовке к сохранению таблицы")
 
-@router.message(FileStates.waiting_file, F.document)
+@router.message(TableStates.waiting_file, F.document)
 async def process_save_file(message: Message, state: FSMContext):
     """Обработка загруженного файла для сохранения"""
     user_id = message.from_user.id
@@ -95,7 +96,7 @@ async def process_save_file(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка при сохранении таблицы")
         await state.clear()
 
-@router.message(FileStates.waiting_file)
+@router.message(TableStates.waiting_file)
 async def wrong_save_file_input(message: Message):
     """Обработчик неправильного ввода при ожидании файла для сохранения"""
     user_id = message.from_user.id
@@ -270,13 +271,14 @@ async def process_delete_callback(callback: CallbackQuery):
         logger.error(f"❌ Ошибка при удалении таблицы {table_id} пользователем {user_id}: {e}")
         await callback.message.edit_text("❌ Произошла ошибка при удалении таблицы")
 
+# СТАРЫЙ ОБРАБОТЧИК ОБНОВЛЕНИЯ - ЗАМЕНЯЕМ НА НОВЫЙ
 @router.callback_query(F.data.startswith("update_"))
 async def process_update_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработчик callback для обновления таблицы"""
+    """Обработчик callback для обновления таблицы - начинает процесс с анализа"""
     user_id = callback.from_user.id
     table_id = callback.data.replace("update_", "")
     
-    logger.info(f"🔄 Пользователь {user_id} обновляет таблицу: {table_id}")
+    logger.info(f"🔄 Пользователь {user_id} начинает обновление таблицы: {table_id}")
     
     try:
         # Получаем информацию о текущей таблице
@@ -287,7 +289,7 @@ async def process_update_callback(callback: CallbackQuery, state: FSMContext):
         
         # Сохраняем ID таблицы для обновления в состоянии
         await state.update_data(table_to_update=table_id)
-        await state.set_state(FileStates.waiting_update_file)
+        await state.set_state(UpdateScenarioStates.waiting_update_file)
         
         await callback.message.edit_text(
             f"🔄 **Обновление таблицы: {table_info.original_name}**\n\n"
@@ -296,7 +298,7 @@ async def process_update_callback(callback: CallbackQuery, state: FSMContext):
             f"📈 Текущие строки: {table_info.rows_count}\n\n"
             f"📎 Пожалуйста, загрузите новый файл для обновления этой таблицы.\n\n"
             f"💡 **Поддерживаемые форматы:** CSV, JSON, Excel\n\n"
-            f"⚠️ **Внимание:** Данные таблицы будут полностью заменены на новые."
+            f"⚠️ **Внимание:** После загрузки файла будет предложено выбрать сценарий объединения."
         )
         logger.info(f"✅ Запрос нового файла для обновления таблицы {table_info.original_name} от пользователя {user_id}")
         
@@ -381,9 +383,11 @@ async def back_handler(message: Message, state: FSMContext):
         logger.error(f"❌ Ошибка в back_handler для пользователя {user_id}: {e}")
         await message.answer("❌ Ошибка при возврате в меню")
 
-@router.message(FileStates.waiting_update_file, F.document)
-async def process_update_file(message: Message, state: FSMContext):
-    """Обработка файла для обновления таблицы"""
+# НОВЫЕ ОБРАБОТЧИКИ ДЛЯ РАСШИРЕННОГО ОБНОВЛЕНИЯ
+
+@router.message(UpdateScenarioStates.waiting_update_file, F.document)
+async def process_update_file_analysis(message: Message, state: FSMContext):
+    """Обработка файла для обновления таблицы с анализом и предложением сценариев"""
     user_id = message.from_user.id
     file_name = message.document.file_name
     
@@ -400,8 +404,6 @@ async def process_update_file(message: Message, state: FSMContext):
             await state.clear()
             return
         
-        logger.debug(f"Обновление таблицы {table_id} файлом {file_name}")
-        
         if not validate_file_extension(file_name):
             logger.warning(f"⚠️ Неподдерживаемый формат файла от пользователя {user_id}: {file_name}")
             await message.answer("❌ Неподдерживаемый формат файла. Используйте Excel, CSV или JSON.")
@@ -416,43 +418,247 @@ async def process_update_file(message: Message, state: FSMContext):
         with open(temp_path, 'wb') as new_file:
             new_file.write(downloaded_file.getvalue())
         
-        # Обновляем таблицу через AdvancedTableManager
-        success, result = table_manager.update_table(table_id, temp_path, 'replace')
+        # Получаем информацию о старой таблице
+        table_info = table_manager.get_table(table_id)
+        if not table_info:
+            await message.answer("❌ Таблица для обновления не найдена.")
+            await state.clear()
+            return
         
-        # Удаляем временный файл
-        os.remove(temp_path)
+        # Читаем старую и новую таблицы
+        old_df, _, _ = table_manager.read_table_file(table_info.file_path)
+        new_df, _, _ = table_manager.read_table_file(temp_path)
         
-        if success:
-            await message.answer(
-                f"✅ **Таблица успешно обновлена!**\n\n"
-                f"📁 Имя: {result.get('message', 'Таблица обновлена')}\n"
-                f"📊 Новые столбцы: {len(result.get('new_columns', []))}\n"
-                f"📈 Новые строки: {result.get('new_rows_count', 0)}\n\n"
-                f"💡 Данные таблицы были заменены на новые."
-            )
-            logger.info(f"✅ Таблица {table_id} обновлена пользователем {user_id} файлом {file_name}")
+        if old_df is None or new_df is None:
+            await message.answer("❌ Ошибка при чтении таблиц. Проверьте формат файлов.")
+            await state.clear()
+            return
+        
+        # Анализируем различия
+        analysis = table_analyzer.analyze_tables_diff(old_df, new_df)
+        
+        # Сохраняем данные в состоянии
+        await state.update_data(
+            temp_file_path=temp_path,
+            analysis=analysis,
+            old_df_columns=list(old_df.columns),
+            old_df_rows=len(old_df),
+            new_df_columns=list(new_df.columns),
+            new_df_rows=len(new_df)
+        )
+        
+        # Форматируем отчет для пользователя
+        report = table_analyzer.format_analysis_report(analysis)
+        
+        # Предлагаем выбрать сценарий
+        await message.answer(
+            f"{report}\n\n"
+            "🔄 **ВЫБЕРИТЕ СЦЕНАРИЙ ОБНОВЛЕНИЯ:**",
+            reply_markup=get_scenario_selection_keyboard()
+        )
+        
+        await state.set_state(UpdateScenarioStates.waiting_scenario_selection)
+        logger.info(f"✅ Анализ завершен, предложены сценарии пользователю {user_id}")
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при анализе файла '{file_name}': {e}", exc_info=True)
+        await message.answer("❌ Ошибка при анализе таблицы. Проверьте формат файла.")
+        await state.clear()
+
+@router.callback_query(UpdateScenarioStates.waiting_scenario_selection, F.data.startswith("scenario_"))
+async def process_scenario_selection(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора сценария обновления"""
+    user_id = callback.from_user.id
+    scenario = callback.data.replace("scenario_", "")
+    
+    logger.info(f"🔄 Пользователь {user_id} выбрал сценарий {scenario}")
+    
+    try:
+        # Сохраняем выбранный сценарий
+        await state.update_data(selected_scenario=scenario)
+        
+        # Показываем описание сценария
+        scenario_desc = get_scenario_description(scenario)
+        
+        # Для сценария 4 (умное объединение) пропускаем выбор правила конфликтов
+        if scenario == '4':
+            await state.update_data(conflict_rule='A')  # по умолчанию
+            await show_preview_and_confirm(callback, state)
         else:
-            await message.answer(
-                f"❌ **Ошибка обновления**\n\n"
-                f"Не удалось обновить таблицу: {result.get('error', 'Неизвестная ошибка')}"
+            # Для остальных сценариев предлагаем выбрать правило конфликтов
+            await callback.message.edit_text(
+                f"{scenario_desc}\n\n"
+                "⚡ **ВЫБЕРИТЕ ПРАВИЛО ДЛЯ КОНФЛИКТУЮЩИХ ИМЕН:**",
+                reply_markup=get_conflict_resolution_keyboard()
             )
-            logger.error(f"❌ Ошибка при обновлении таблицы {table_id}: {result.get('error')}")
+            await state.set_state(UpdateScenarioStates.waiting_conflict_resolution)
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка при выборе сценария {scenario}: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при выборе сценария")
+
+@router.callback_query(UpdateScenarioStates.waiting_conflict_resolution, F.data.startswith("conflict_"))
+async def process_conflict_resolution(callback: CallbackQuery, state: FSMContext):
+    """Обработчик выбора правила обработки конфликтов"""
+    user_id = callback.from_user.id
+    conflict_rule = callback.data.replace("conflict_", "")
+    
+    logger.info(f"🔄 Пользователь {user_id} выбрал правило конфликтов {conflict_rule}")
+    
+    try:
+        await state.update_data(conflict_rule=conflict_rule)
+        await show_preview_and_confirm(callback, state)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при выборе правила конфликтов: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при выборе правила")
+
+async def show_preview_and_confirm(callback: CallbackQuery, state: FSMContext):
+    """Показывает предварительный результат и запрашивает подтверждение"""
+    user_id = callback.from_user.id
+    
+    try:
+        state_data = await state.get_data()
+        scenario = state_data.get('selected_scenario')
+        conflict_rule = state_data.get('conflict_rule', 'A')
+        table_id = state_data.get('table_to_update')
+        temp_path = state_data.get('temp_file_path')
+        analysis = state_data.get('analysis', {})
+        
+        # Получаем таблицы
+        table_info = table_manager.get_table(table_id)
+        old_df, _, _ = table_manager.read_table_file(table_info.file_path)
+        new_df, _, _ = table_manager.read_table_file(temp_path)
+        
+        # Применяем сценарий для предварительного просмотра
+        preview_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, conflict_rule)
+        
+        # Формируем сообщение с предварительным результатом
+        scenario_names = {
+            '1': 'Сохранить структуру + добавить строки',
+            '2': 'Расширить структуру + сохранить строки', 
+            '3': 'Полное объединение',
+            '4': 'Умное объединение'
+        }
+        
+        conflict_names = {
+            'A': 'Сохранить имена из СТАРОЙ таблицы',
+            'B': 'Использовать имена из НОВОЙ таблицы',
+            'C': 'Объединить (приоритет новых)'
+        }
+        
+        preview_text = (
+            f"✅ **ПРЕДВАРИТЕЛЬНЫЙ РЕЗУЛЬТАТ**\n\n"
+            f"📋 **Сценарий:** {scenario_names.get(scenario, 'Неизвестный')}\n"
+            f"⚡ **Правило конфликтов:** {conflict_names.get(conflict_rule, 'Неизвестное')}\n"
+            f"📊 **Итоговые размеры:** {len(preview_df)} строк, {len(preview_df.columns)} столбцов\n\n"
+            f"📈 **Изменения:**\n"
+            f"• Столбцов: +{len(preview_df.columns) - analysis.get('columns', {}).get('total_old', 0)}\n"
+            f"• Строк: +{len(preview_df) - analysis.get('rows', {}).get('total_old', 0)}\n\n"
+            f"💡 {message}\n\n"
+            f"**Подтверждаете обновление?**"
+        )
+        
+        await callback.message.edit_text(
+            preview_text,
+            reply_markup=get_update_confirmation_keyboard()
+        )
+        await state.set_state(UpdateScenarioStates.waiting_update_confirmation)
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при формировании предпросмотра: {e}")
+        await callback.message.edit_text("❌ Ошибка при формировании предпросмотра результата")
+
+@router.callback_query(UpdateScenarioStates.waiting_update_confirmation, F.data == "confirm_update")
+async def process_update_confirmation(callback: CallbackQuery, state: FSMContext):
+    """Обработчик подтверждения обновления таблицы"""
+    user_id = callback.from_user.id
+    
+    logger.info(f"🔄 Пользователь {user_id} подтвердил обновление таблицы")
+    
+    try:
+        state_data = await state.get_data()
+        table_id = state_data.get('table_to_update')
+        temp_path = state_data.get('temp_file_path')
+        scenario = state_data.get('selected_scenario')
+        conflict_rule = state_data.get('conflict_rule', 'A')
+        
+        # Получаем таблицы
+        table_info = table_manager.get_table(table_id)
+        old_df, _, _ = table_manager.read_table_file(table_info.file_path)
+        new_df, _, _ = table_manager.read_table_file(temp_path)
+        
+        # Применяем сценарий
+        result_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, conflict_rule)
+        
+        # Сохраняем обновленную таблицу
+        table_manager.save_table_file(result_df, table_info.file_path, 'xlsx')
+        
+        # Обновляем информацию о таблице
+        table_info.columns = result_df.columns.tolist()
+        table_info.rows_count = len(result_df)
+        table_info.file_size = table_manager.get_file_size(table_info.file_path)
+        
+        # Сохраняем данные в table_manager
+        table_manager._save_data()
+        
+        await callback.message.edit_text(
+            f"✅ **ТАБЛИЦА УСПЕШНО ОБНОВЛЕНА!**\n\n"
+            f"📁 **Имя:** {table_info.original_name}\n"
+            f"📊 **Столбцы:** {len(table_info.columns)}\n"
+            f"📈 **Строки:** {table_info.rows_count}\n"
+            f"💾 **Размер:** {format_file_size(table_info.file_size)}\n\n"
+            f"💡 {message}"
+        )
+        
+        logger.info(f"✅ Таблица {table_info.original_name} обновлена пользователем {user_id}")
         
         # Очищаем состояние
         await state.clear()
         
-        # Возвращаем в меню таблиц
-        await message.answer(
-            "Выберите следующее действие:",
-            reply_markup=get_tables_keyboard()
-        )
+        # Удаляем временный файл
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
             
     except Exception as e:
-        logger.error(f"❌ Ошибка при обновлении таблицы файлом '{file_name}': {e}", exc_info=True)
-        await message.answer("❌ Ошибка при обновлении таблицы")
+        logger.error(f"❌ Ошибка при обновлении таблицы: {e}")
+        await callback.message.edit_text("❌ Произошла ошибка при обновлении таблицы")
         await state.clear()
 
-@router.message(FileStates.waiting_update_file)
+@router.callback_query(UpdateScenarioStates.waiting_scenario_selection, F.data == "cancel_update")
+@router.callback_query(UpdateScenarioStates.waiting_conflict_resolution, F.data == "cancel_update")
+@router.callback_query(UpdateScenarioStates.waiting_update_confirmation, F.data == "cancel_update")
+async def process_cancel_update(callback: CallbackQuery, state: FSMContext):
+    """Обработчик отмены обновления"""
+    user_id = callback.from_user.id
+    logger.info(f"❌ Пользователь {user_id} отменил обновление таблицы")
+    
+    # Удаляем временный файл
+    state_data = await state.get_data()
+    temp_path = state_data.get('temp_file_path')
+    if temp_path and os.path.exists(temp_path):
+        os.remove(temp_path)
+    
+    await state.clear()
+    await callback.message.edit_text("❌ Обновление таблицы отменено.")
+    await callback.message.answer(
+        "Выберите следующее действие:",
+        reply_markup=get_tables_keyboard()
+    )
+
+@router.callback_query(UpdateScenarioStates.waiting_update_confirmation, F.data == "change_scenario")
+async def process_change_scenario(callback: CallbackQuery, state: FSMContext):
+    """Обработчик смены сценария"""
+    user_id = callback.from_user.id
+    logger.info(f"🔄 Пользователь {user_id} запросил смену сценария")
+    
+    await callback.message.edit_text(
+        "🔄 **ВЫБЕРИТЕ СЦЕНАРИЙ ОБНОВЛЕНИЯ:**",
+        reply_markup=get_scenario_selection_keyboard()
+    )
+    await state.set_state(UpdateScenarioStates.waiting_scenario_selection)
+
+@router.message(UpdateScenarioStates.waiting_update_file)
 async def wrong_update_file_input(message: Message):
     """Обработчик неправильного ввода при ожидании файла для обновления"""
     user_id = message.from_user.id
