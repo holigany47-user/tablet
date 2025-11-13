@@ -602,27 +602,47 @@ async def process_update_confirmation(callback: CallbackQuery, state: FSMContext
         # Применяем сценарий
         result_df, message = scenario_applier.apply_scenario(scenario, old_df, new_df, conflict_rule)
         
-        # Сохраняем обновленную таблицу
-        table_manager.save_table_file(result_df, table_info.file_path, 'xlsx')
+        # ВМЕСТО ПЕРЕЗАПИСИ СТАРОГО ФАЙЛА - СОЗДАЕМ НОВУЮ ТАБЛИЦУ
+        # Генерируем новое имя файла с пометкой "обновлено"
+        current_date = datetime.now().strftime('%d.%m.%Y')
+        safe_name = table_info.original_name.replace(' ', '_')
+        filename = f"{safe_name}_updated_{current_date}_{generate_timestamp()}.xlsx"
+        new_file_path = os.path.join("storage", filename)
         
-        # Обновляем информацию о таблице
-        table_info.columns = result_df.columns.tolist()
-        table_info.rows_count = len(result_df)
-        table_info.file_size = table_manager.get_file_size(table_info.file_path)
+        # Сохраняем обновленную таблицу как новый файл
+        table_manager.save_table_file(result_df, new_file_path, 'xlsx')
+        file_size = table_manager.get_file_size(new_file_path)
         
-        # Сохраняем данные в table_manager
+        # Создаем новую запись в таблицах (не удаляем старую)
+        new_table_id = f"{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        
+        new_table_info = TableInfo(
+            id=new_table_id,
+            user_id=user_id,
+            filename=filename,
+            original_name=f"{table_info.original_name} (обновлено)",
+            file_path=new_file_path,
+            created_at=current_date,
+            columns=result_df.columns.tolist(),
+            rows_count=len(result_df),
+            file_size=file_size
+        )
+        
+        # Добавляем новую таблицу в менеджер
+        table_manager.tables[new_table_id] = new_table_info
         table_manager._save_data()
         
         await callback.message.edit_text(
-            f"✅ **ТАБЛИЦА УСПЕШНО ОБНОВЛЕНА!**\n\n"
-            f"📁 **Имя:** {table_info.original_name}\n"
-            f"📊 **Столбцы:** {len(table_info.columns)}\n"
-            f"📈 **Строки:** {table_info.rows_count}\n"
-            f"💾 **Размер:** {format_file_size(table_info.file_size)}\n\n"
-            f"💡 {message}"
+            f"✅ **НОВАЯ ТАБЛИЦА СОЗДАНА!**\n\n"
+            f"📁 **Имя:** {new_table_info.original_name}\n"
+            f"📊 **Столбцы:** {len(new_table_info.columns)}\n"
+            f"📈 **Строки:** {new_table_info.rows_count}\n"
+            f"💾 **Размер:** {format_file_size(new_table_info.file_size)}\n\n"
+            f"💡 {message}\n\n"
+            f"🔄 Исходная таблица сохранена."
         )
         
-        logger.info(f"✅ Таблица {table_info.original_name} обновлена пользователем {user_id}")
+        logger.info(f"✅ Новая таблица {new_table_info.original_name} создана пользователем {user_id}")
         
         # Очищаем состояние
         await state.clear()
